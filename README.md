@@ -11,10 +11,11 @@ hold/paneling-ui-wip-20260525
 ## Current Slice
 
 - `LocalCoop.Protocol` defines broker client config parsing, transport envelopes, and length-prefixed frame encoding.
-- `LocalCoop.Broker` tracks one host plus up to three clients and routes direct or broadcast envelopes without understanding gameplay.
+- `LocalCoop.Protocol` also includes a reusable TCP client connection helper that registers with the broker and reads/writes envelopes.
+- `LocalCoop.Broker` tracks one host plus up to three clients, acknowledges registration, and routes direct or broadcast envelopes without understanding gameplay.
 - `LocalCoop.Broker.Cli` starts a loopback TCP broker.
 - `LocalCoop.MultiClientHarness` creates deterministic four-client broker config text for future process launching.
-- `LocalCoop.Mod` is intentionally only a fresh project shell for the upcoming STS2 transport shim.
+- `LocalCoop.Mod` can read `enable-local-broker.txt` from the mod directory and derive the per-process client id and log path.
 
 ## Run
 
@@ -25,5 +26,4 @@ dotnet run --project src\LocalCoop.Broker.Cli -- local-test 38989
 
 ## Next Slice
 
-The next implementation should make the mod read broker client config per process, then spike replacing or patching STS2 multiplayer transport so native multiplayer messages are forwarded through the broker.
-
+The next implementation should spike replacing or patching STS2 multiplayer transport so native multiplayer messages are forwarded through the broker.

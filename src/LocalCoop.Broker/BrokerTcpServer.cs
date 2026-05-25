@@ -112,6 +112,11 @@ public sealed class BrokerTcpServer : IAsyncDisposable
                     _streamsByClientId[clientId] = stream;
                 }
 
+                await BrokerFrameCodec.WriteAsync(
+                    stream,
+                    BrokerTransportMessage.ForRegistrationAccepted(clientId, _session.SessionId),
+                    cancellationToken);
+
                 continue;
             }
 

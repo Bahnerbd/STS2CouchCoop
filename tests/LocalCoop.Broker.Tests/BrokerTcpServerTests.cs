@@ -24,10 +24,17 @@ public sealed class BrokerTcpServerTests
             host.GetStream(),
             BrokerTransportMessage.ForRegistration(new BrokerClientRegistrationDto("host", BrokerClientRole.Host, 0)),
             CancellationToken.None);
+        var hostAccepted = await BrokerFrameCodec.ReadAsync(host.GetStream(), CancellationToken.None);
+        Assert.AreEqual(BrokerTransportMessageKind.RegistrationAccepted, hostAccepted?.Kind);
+        Assert.AreEqual("host", hostAccepted?.RegistrationAccepted?.ClientId);
+
         await BrokerFrameCodec.WriteAsync(
             client.GetStream(),
             BrokerTransportMessage.ForRegistration(new BrokerClientRegistrationDto("client-1", BrokerClientRole.Client, 1)),
             CancellationToken.None);
+        var clientAccepted = await BrokerFrameCodec.ReadAsync(client.GetStream(), CancellationToken.None);
+        Assert.AreEqual(BrokerTransportMessageKind.RegistrationAccepted, clientAccepted?.Kind);
+        Assert.AreEqual("client-1", clientAccepted?.RegistrationAccepted?.ClientId);
 
         await BrokerFrameCodec.WriteAsync(
             host.GetStream(),
