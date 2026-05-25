@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <ProjectReference Include="..\..\src\LocalCoop.Broker\LocalCoop.Broker.csproj" />
     <ProjectReference Include="..\..\src\LocalCoop.Protocol\LocalCoop.Protocol.csproj" />
   </ItemGroup>
 </Project>
-
