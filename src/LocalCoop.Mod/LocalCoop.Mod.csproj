@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>LocalCoop</AssemblyName>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\LocalCoop.Protocol\LocalCoop.Protocol.csproj" />
+  </ItemGroup>
+</Project>
+

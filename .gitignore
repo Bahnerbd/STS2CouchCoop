@@ -1,0 +1,17 @@
+# Build outputs
+bin/
+obj/
+TestResults/
+
+# IDE/editor state
+.vs/
+.vscode/
+*.user
+*.suo
+
+# Local runtime artifacts
+artifacts/
+tmp/
+*.log
+*.pid
+
