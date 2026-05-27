@@ -19,6 +19,8 @@ public sealed class TransportSeamProbeTests
         CollectionAssert.Contains(labels, "character select screen");
         Assert.IsTrue(result.Entries.Any(entry => entry.Members.Any(member => member.Contains("SendMessage"))));
         Assert.IsTrue(result.Entries.Any(entry => entry.Members.Any(member => member.Contains("InitializeMultiplayerAsHost"))));
+        Assert.IsTrue(result.Entries.Any(entry => entry.Members.Any(member => member.Contains("ctor") && member.Contains("FakeNetGameService"))));
+        Assert.IsTrue(result.Entries.Any(entry => entry.Members.Any(member => member.Contains("CreateNetGameService"))));
     }
 
     [TestMethod]
@@ -49,6 +51,14 @@ public sealed class TransportSeamProbeTests
 
     private sealed class FakeStartRunLobby
     {
+        public FakeStartRunLobby(FakeNetGameService service)
+        {
+        }
+
+        public static FakeNetGameService CreateNetGameService()
+        {
+            return new FakeNetGameService();
+        }
     }
 
     private sealed class FakeSteamHost
@@ -67,4 +77,3 @@ public sealed class TransportSeamProbeTests
         public void InitializeMultiplayerAsClient(FakeNetGameService service) { }
     }
 }
-

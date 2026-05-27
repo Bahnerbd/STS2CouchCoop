@@ -4,6 +4,16 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
 {
     public static ClientLaunchPlan CreateDefault(string sessionId, string brokerHost, int brokerPort)
     {
+        return Create(sessionId, brokerHost, brokerPort, clientCount: 4);
+    }
+
+    public static ClientLaunchPlan CreateTwoClient(string sessionId, string brokerHost, int brokerPort)
+    {
+        return Create(sessionId, brokerHost, brokerPort, clientCount: 2);
+    }
+
+    private static ClientLaunchPlan Create(string sessionId, string brokerHost, int brokerPort, int clientCount)
+    {
         if (string.IsNullOrWhiteSpace(sessionId))
         {
             throw new ArgumentException("Session id must not be blank.", nameof(sessionId));
@@ -19,8 +29,13 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
             throw new ArgumentOutOfRangeException(nameof(brokerPort), "Broker port must be 1 through 65535.");
         }
 
+        if (clientCount is < 2 or > 4)
+        {
+            throw new ArgumentOutOfRangeException(nameof(clientCount), "Client count must be 2 through 4.");
+        }
+
         return new ClientLaunchPlan(
-            Enumerable.Range(0, 4)
+            Enumerable.Range(0, clientCount)
                 .Select(index => new ClientLaunchPlanEntry(
                     ClientId: $"client-{index}",
                     ConfigContent: FormatConfig(
@@ -50,4 +65,3 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
 }
 
 public sealed record ClientLaunchPlanEntry(string ClientId, string ConfigContent);
-

@@ -1,4 +1,3 @@
-using HarmonyLib;
 using LocalCoop.Mod.Runtime;
 using MegaCrit.Sts2.Core.Modding;
 
@@ -18,14 +17,23 @@ public static class LocalCoopMod
         }
 
         _initialized = true;
+        LocalModAssemblyResolver.Install(typeof(LocalCoopMod).Assembly);
+
         var modDirectory = Path.GetDirectoryName(typeof(LocalCoopMod).Assembly.Location);
+        BrokerModStartupResult? startup = null;
         if (!string.IsNullOrWhiteSpace(modDirectory))
         {
-            BrokerModStartup.Initialize(modDirectory, _ => TransportSeamProbe.Run());
+            startup = BrokerModStartup.Initialize(modDirectory, _ => TransportSeamProbe.Run());
         }
 
-        var harmony = new Harmony("localcoop.transport-broker");
-        harmony.PatchAll(typeof(LocalCoopMod).Assembly);
+        LocalCoopPatchInstaller.Install(
+            typeof(LocalCoopMod).Assembly,
+            message =>
+            {
+                if (startup is not null)
+                {
+                    new BrokerEventLog(startup.Settings.EventLogPath).Write(message);
+                }
+            });
     }
 }
-

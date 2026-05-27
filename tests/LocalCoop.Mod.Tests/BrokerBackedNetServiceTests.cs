@@ -37,6 +37,43 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public void SyncSendMessageBroadcastCreatesTypedEnvelope()
+    {
+        var transport = new CapturingTransport();
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-0",
+            clientIndex: 0,
+            transport);
+
+        service.SendMessage(new FakeLobbyMessage("appearance"));
+
+        var envelope = transport.Sent.Single();
+        Assert.AreEqual("client-0", envelope.SourceClientId);
+        Assert.IsNull(envelope.TargetClientId);
+        Assert.AreEqual(typeof(FakeLobbyMessage).AssemblyQualifiedName, envelope.MessageType);
+    }
+
+    [TestMethod]
+    public void TracksConnectionLoadingAndRawLobbyIdentifier()
+    {
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-0",
+            clientIndex: 0,
+            new CapturingTransport());
+
+        Assert.IsTrue(service.IsConnected);
+        Assert.IsFalse(service.IsGameLoading);
+
+        service.SetGameLoading(true);
+
+        Assert.IsTrue(service.IsGameLoading);
+        Assert.AreEqual("local-test", service.GetRawLobbyIdentifier());
+        service.Update();
+    }
+
+    [TestMethod]
     public async Task DispatchEnvelopeInvokesRegisteredHandler()
     {
         var transport = new CapturingTransport();

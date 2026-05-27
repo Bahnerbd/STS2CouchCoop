@@ -28,6 +28,10 @@ public sealed class BrokerBackedNetService
 
     public ulong NetId { get; }
 
+    public bool IsConnected { get; private set; } = true;
+
+    public bool IsGameLoading { get; private set; }
+
     public void RegisterMessageHandler<T>(Action<T> handler)
     {
         var key = MessageTypeKey<T>();
@@ -67,6 +71,30 @@ public sealed class BrokerBackedNetService
         await _transport.SendEnvelopeAsync(envelope, cancellationToken);
     }
 
+    public void SendMessage<T>(T message, ulong playerId)
+    {
+        SendMessageAsync(message, playerId, CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    public void SendMessage<T>(T message)
+    {
+        SendMessageAsync(message, targetPlayerId: null, CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    public void Update()
+    {
+    }
+
+    public void SetGameLoading(bool isGameLoading)
+    {
+        IsGameLoading = isGameLoading;
+    }
+
+    public string GetRawLobbyIdentifier()
+    {
+        return _sessionId;
+    }
+
     public Task DispatchEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -101,4 +129,3 @@ public sealed class BrokerBackedNetService
         return $"client-{clientIndex}";
     }
 }
-

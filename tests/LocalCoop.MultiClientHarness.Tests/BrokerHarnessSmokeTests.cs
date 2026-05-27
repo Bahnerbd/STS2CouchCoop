@@ -15,5 +15,14 @@ public sealed class BrokerHarnessSmokeTests
         CollectionAssert.AreEquivalent(new[] { "client-1", "client-2", "client-3" }, result.BroadcastTargets.ToArray());
         CollectionAssert.AreEqual(new[] { "client-0" }, result.DirectTargets.ToArray());
     }
-}
 
+    [TestMethod]
+    public async Task RegistersTwoClientsAndRoutesLobbySmokeMessages()
+    {
+        var result = await BrokerHarnessSmoke.RunTwoClientAsync("local-test", CancellationToken.None);
+
+        CollectionAssert.AreEqual(new[] { "client-0", "client-1" }, result.RegisteredClientIds.ToArray());
+        CollectionAssert.AreEqual(new[] { "client-1" }, result.BroadcastTargets.ToArray());
+        CollectionAssert.AreEqual(new[] { "client-0" }, result.DirectTargets.ToArray());
+    }
+}

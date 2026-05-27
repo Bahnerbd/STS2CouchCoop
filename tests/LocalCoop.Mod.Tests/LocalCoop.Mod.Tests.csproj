@@ -9,4 +9,9 @@
     <ProjectReference Include="..\..\src\LocalCoop.Broker\LocalCoop.Broker.csproj" />
     <ProjectReference Include="..\..\src\LocalCoop.Mod\LocalCoop.Mod.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Reference Include="0Harmony">
+      <HintPath>..\..\..\data_sts2_windows_x86_64\0Harmony.dll</HintPath>
+    </Reference>
+  </ItemGroup>
 </Project>

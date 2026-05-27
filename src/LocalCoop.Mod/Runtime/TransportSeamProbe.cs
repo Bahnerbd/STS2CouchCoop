@@ -28,6 +28,9 @@ public static class TransportSeamProbe
         "SendMessageToClient",
         "RegisterMessageHandler",
         "UnregisterMessageHandler",
+        "Create",
+        "Factory",
+        "Lobby",
         "Receive",
         "Dispatch",
         "Handle",
@@ -73,11 +76,19 @@ public static class TransportSeamProbe
 
     private static IReadOnlyList<string> DescribeInterestingMembers(Type type)
     {
-        return type.GetMethods(InspectFlags)
+        return type.GetConstructors(InspectFlags)
+            .Select(FormatConstructor)
+            .Concat(type.GetMethods(InspectFlags)
             .Where(method => InterestingMethodNames.Any(name => method.Name.Contains(name, StringComparison.OrdinalIgnoreCase)))
             .OrderBy(method => method.Name)
-            .Select(FormatMethod)
+            .Select(FormatMethod))
             .ToArray();
+    }
+
+    private static string FormatConstructor(ConstructorInfo constructor)
+    {
+        var parameters = string.Join(", ", constructor.GetParameters().Select(parameter => $"{FormatType(parameter.ParameterType)} {parameter.Name}"));
+        return $"ctor {constructor.DeclaringType?.FullName ?? constructor.DeclaringType?.Name ?? ".ctor"}({parameters})";
     }
 
     private static string FormatMethod(MethodInfo method)
@@ -97,4 +108,3 @@ public static class TransportSeamProbe
         return type.FullName ?? type.Name;
     }
 }
-

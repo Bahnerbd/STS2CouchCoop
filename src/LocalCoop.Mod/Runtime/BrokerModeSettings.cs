@@ -10,15 +10,24 @@ public sealed record BrokerModeSettings(
     string? FailureReason)
 {
     public const string MarkerFileName = "enable-local-broker.txt";
+    public const string ConfigDirectoryEnvironmentVariable = "LOCALCOOP_CONFIG_DIR";
 
     public static BrokerModeSettings LoadFromDirectory(string modDirectory)
+    {
+        return Load(modDirectory, Environment.GetEnvironmentVariable);
+    }
+
+    public static BrokerModeSettings Load(
+        string modDirectory,
+        Func<string, string?> getEnvironmentVariable)
     {
         if (string.IsNullOrWhiteSpace(modDirectory))
         {
             throw new ArgumentException("Mod directory must not be blank.", nameof(modDirectory));
         }
 
-        var markerPath = Path.Combine(modDirectory, MarkerFileName);
+        var configDirectory = ResolveConfigDirectory(modDirectory, getEnvironmentVariable);
+        var markerPath = Path.Combine(configDirectory, MarkerFileName);
         if (!File.Exists(markerPath))
         {
             return Disabled(modDirectory, failureReason: null);
@@ -41,6 +50,14 @@ public sealed record BrokerModeSettings(
         }
     }
 
+    private static string ResolveConfigDirectory(
+        string modDirectory,
+        Func<string, string?> getEnvironmentVariable)
+    {
+        var configuredDirectory = getEnvironmentVariable(ConfigDirectoryEnvironmentVariable);
+        return string.IsNullOrWhiteSpace(configuredDirectory) ? modDirectory : configuredDirectory;
+    }
+
     private static BrokerModeSettings Disabled(string modDirectory, string? failureReason)
     {
         return new BrokerModeSettings(
@@ -57,4 +74,3 @@ public sealed record BrokerModeSettings(
         return Path.Combine(modDirectory, $"localcoop-{role}-{config.ClientIndex}-events.txt");
     }
 }
-

@@ -25,5 +25,21 @@ public sealed class ClientLaunchPlanTests
         Assert.IsTrue(parsed.All(config => config.SessionId == "local-test"));
         Assert.IsTrue(parsed.All(config => config.Port == 38989));
     }
-}
 
+    [TestMethod]
+    public void CreatesTwoClientBrokerConfigsForLobbySmoke()
+    {
+        var plan = ClientLaunchPlan.CreateTwoClient("local-test", "127.0.0.1", 38989);
+
+        Assert.AreEqual(2, plan.Clients.Count);
+        CollectionAssert.AreEqual(new[] { "client-0", "client-1" }, plan.Clients.Select(client => client.ClientId).ToArray());
+
+        var parsed = plan.Clients
+            .Select(client => BrokerClientConfig.Parse(client.ConfigContent))
+            .ToArray();
+
+        Assert.AreEqual(BrokerClientRole.Host, parsed[0].Role);
+        Assert.AreEqual(BrokerClientRole.Client, parsed[1].Role);
+        CollectionAssert.AreEqual(new[] { 0, 1 }, parsed.Select(config => config.ClientIndex).ToArray());
+    }
+}

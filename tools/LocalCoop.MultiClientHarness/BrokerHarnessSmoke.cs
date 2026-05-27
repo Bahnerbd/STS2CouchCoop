@@ -8,10 +8,25 @@ public static class BrokerHarnessSmoke
 {
     public static async Task<BrokerHarnessSmokeResult> RunAsync(string sessionId, CancellationToken cancellationToken)
     {
+        return await RunAsync(sessionId, clientCount: 4, cancellationToken);
+    }
+
+    public static async Task<BrokerHarnessSmokeResult> RunTwoClientAsync(string sessionId, CancellationToken cancellationToken)
+    {
+        return await RunAsync(sessionId, clientCount: 2, cancellationToken);
+    }
+
+    private static async Task<BrokerHarnessSmokeResult> RunAsync(
+        string sessionId,
+        int clientCount,
+        CancellationToken cancellationToken)
+    {
         await using var server = new BrokerTcpServer(sessionId, IPAddress.Loopback, port: 0);
         await server.StartAsync(cancellationToken);
 
-        var plan = ClientLaunchPlan.CreateDefault(sessionId, "127.0.0.1", server.Port);
+        var plan = clientCount == 2
+            ? ClientLaunchPlan.CreateTwoClient(sessionId, "127.0.0.1", server.Port)
+            : ClientLaunchPlan.CreateDefault(sessionId, "127.0.0.1", server.Port);
         var connections = new List<BrokerClientConnection>();
         try
         {
@@ -74,4 +89,3 @@ public sealed record BrokerHarnessSmokeResult(
     IReadOnlyList<string> RegisteredClientIds,
     IReadOnlyList<string> BroadcastTargets,
     IReadOnlyList<string> DirectTargets);
-

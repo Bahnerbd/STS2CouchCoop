@@ -39,6 +39,35 @@ public sealed class BrokerModeSettingsTests
     }
 
     [TestMethod]
+    public void LoadUsesLocalCoopConfigDirectoryBeforeModDirectory()
+    {
+        var modDirectory = CreateTempDirectory();
+        var configDirectory = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(modDirectory, BrokerModeSettings.MarkerFileName), """
+            role=host
+            clientIndex=0
+            endpoint=127.0.0.1:38989
+            sessionId=mod-dir-session
+            """);
+        File.WriteAllText(Path.Combine(configDirectory, BrokerModeSettings.MarkerFileName), """
+            role=client
+            clientIndex=1
+            endpoint=127.0.0.1:38990
+            sessionId=config-dir-session
+            """);
+
+        var settings = BrokerModeSettings.Load(
+            modDirectory,
+            name => name == BrokerModeSettings.ConfigDirectoryEnvironmentVariable ? configDirectory : null);
+
+        Assert.IsTrue(settings.Enabled);
+        Assert.AreEqual(BrokerClientRole.Client, settings.Config?.Role);
+        Assert.AreEqual(1, settings.Config?.ClientIndex);
+        Assert.AreEqual("config-dir-session", settings.Config?.SessionId);
+        Assert.AreEqual(Path.Combine(modDirectory, "localcoop-client-1-events.txt"), settings.EventLogPath);
+    }
+
+    [TestMethod]
     public void LoadFromDirectoryKeepsFailureReasonForMalformedMarker()
     {
         var modDirectory = CreateTempDirectory();
@@ -57,4 +86,3 @@ public sealed class BrokerModeSettingsTests
         return path;
     }
 }
-

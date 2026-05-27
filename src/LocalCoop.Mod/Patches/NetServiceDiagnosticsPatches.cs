@@ -18,18 +18,43 @@ public static class NetServiceDiagnosticsPatches
     {
         foreach (var type in AppDomain.CurrentDomain.GetAssemblies().SelectMany(GetLoadableTypes))
         {
-            if (!type.Name.Contains("Net", StringComparison.OrdinalIgnoreCase)
-                && !type.Name.Contains("Steam", StringComparison.OrdinalIgnoreCase))
+            if (!ShouldInspectType(type))
             {
                 continue;
             }
 
             foreach (var method in AccessTools.GetDeclaredMethods(type)
-                         .Where(method => MethodNameFragments.Any(fragment => method.Name.Contains(fragment, StringComparison.OrdinalIgnoreCase))))
+                         .Where(ShouldPatchMethod))
             {
                 yield return method;
             }
         }
+    }
+
+    public static bool ShouldInspectType(Type type)
+    {
+        if (type.FullName is null || !type.FullName.StartsWith("MegaCrit.Sts2.", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return type.Name.Contains("Net", StringComparison.OrdinalIgnoreCase)
+            || type.Name.Contains("Steam", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool ShouldPatchMethod(MethodBase method)
+    {
+        if (method.IsAbstract)
+        {
+            return false;
+        }
+
+        if (method.ContainsGenericParameters || method.IsGenericMethod || method.IsGenericMethodDefinition)
+        {
+            return false;
+        }
+
+        return MethodNameFragments.Any(fragment => method.Name.Contains(fragment, StringComparison.OrdinalIgnoreCase));
     }
 
     public static void Prefix(MethodBase __originalMethod, object __instance, object[] __args)
@@ -76,4 +101,3 @@ public static class NetServiceDiagnosticsPatches
             : BrokerModeSettings.LoadFromDirectory(modDirectory);
     }
 }
-

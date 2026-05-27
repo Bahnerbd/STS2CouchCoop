@@ -23,6 +23,7 @@ hold/paneling-ui-wip-20260525
 ```powershell
 dotnet test LocalCoopTransport.sln
 dotnet run --project src\LocalCoop.Broker.Cli -- local-test 38989
+dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-two-client .localcoop-clients local-test 38989
 ```
 
 ## Next Slice
@@ -49,6 +50,6 @@ sessionId=local-test
 
 4. Launch STS2 and navigate to multiplayer character select as host.
 5. Inspect `mods\LocalCoop\localcoop-host-0-events.txt` and `mods\LocalCoop\localcoop-transport-probe-client-0.txt`.
-6. Repeat with `role=client` and `clientIndex=1` once process isolation/config copying is added for multiple simultaneous game instances.
+6. For the two-client path, run the harness prep command and launch each generated command in a separate PowerShell session. Each command sets `LOCALCOOP_CONFIG_DIR` before starting STS2, allowing host/client configs to remain separate while sharing the installed mod DLLs.
 
 Expected evidence for this slice is diagnostic only: startup, probe report, and passive lobby/net-service method logs. Native lobby synchronization is the next spike.
