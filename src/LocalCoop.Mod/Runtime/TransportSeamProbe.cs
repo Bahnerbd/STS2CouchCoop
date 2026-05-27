@@ -11,15 +11,15 @@ public static class TransportSeamProbe
         BindingFlags.Static |
         BindingFlags.DeclaredOnly;
 
-    private static readonly (string Label, Func<Type, bool> Matches)[] Targets =
+    private static readonly (string Label, Func<Type, bool> Matches, string? PreferredName)[] Targets =
     [
         ("net game service", type => type.Name.Contains("NetGameService", StringComparison.OrdinalIgnoreCase)
-            && !type.Name.Contains("Host", StringComparison.OrdinalIgnoreCase)),
-        ("host game service", type => type.Name.Contains("NetHostGameService", StringComparison.OrdinalIgnoreCase)),
-        ("start run lobby", type => type.Name.Contains("StartRunLobby", StringComparison.OrdinalIgnoreCase)),
-        ("steam host transport", type => type.Name.Contains("SteamHost", StringComparison.OrdinalIgnoreCase)),
-        ("steam client transport", type => type.Name.Contains("SteamClient", StringComparison.OrdinalIgnoreCase)),
-        ("character select screen", type => type.Name.Contains("CharacterSelect", StringComparison.OrdinalIgnoreCase))
+            && !type.Name.Contains("Host", StringComparison.OrdinalIgnoreCase), "INetGameService"),
+        ("host game service", type => type.Name.Contains("NetHostGameService", StringComparison.OrdinalIgnoreCase), "NetHostGameService"),
+        ("start run lobby", type => type.Name.Contains("StartRunLobby", StringComparison.OrdinalIgnoreCase), "StartRunLobby"),
+        ("steam host transport", type => type.Name.Contains("SteamHost", StringComparison.OrdinalIgnoreCase), "SteamHost"),
+        ("steam client transport", type => type.Name.Contains("SteamClient", StringComparison.OrdinalIgnoreCase), "SteamClient"),
+        ("character select screen", type => type.Name.Contains("CharacterSelect", StringComparison.OrdinalIgnoreCase), "NCharacterSelectScreen")
     ];
 
     private static readonly string[] InterestingMethodNames =
@@ -44,9 +44,11 @@ public static class TransportSeamProbe
         var types = sourceAssemblies.SelectMany(GetLoadableTypes).ToArray();
         var entries = new List<TransportSeamProbeEntry>();
 
-        foreach (var (label, matches) in Targets)
+        foreach (var (label, matches, preferredName) in Targets)
         {
-            var type = types.FirstOrDefault(matches);
+            var type = types.Where(matches)
+                .OrderBy(type => TargetScore(type, preferredName))
+                .FirstOrDefault();
             if (type is null)
             {
                 entries.Add(new TransportSeamProbeEntry(label, "missing", []));
@@ -60,6 +62,27 @@ public static class TransportSeamProbe
         }
 
         return new TransportSeamProbeResult(entries);
+    }
+
+    private static int TargetScore(Type type, string? preferredName)
+    {
+        var score = 0;
+        if (preferredName is not null && string.Equals(type.Name, preferredName, StringComparison.Ordinal))
+        {
+            score -= 100;
+        }
+
+        if (type.IsInterface)
+        {
+            score += 50;
+        }
+
+        if (type.IsAbstract)
+        {
+            score += 10;
+        }
+
+        return score;
     }
 
     private static IEnumerable<Type> GetLoadableTypes(Assembly assembly)

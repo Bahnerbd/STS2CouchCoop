@@ -24,6 +24,19 @@ public sealed class TransportSeamProbeTests
     }
 
     [TestMethod]
+    public void ProbePrefersConcreteLobbyAndCharacterSelectClassesOverInterfaces()
+    {
+        var result = TransportSeamProbe.Run([typeof(FakeNetGameService).Assembly]);
+
+        Assert.AreEqual(
+            typeof(FakeStartRunLobby).FullName,
+            result.Entries.Single(entry => entry.Label == "start run lobby").TypeName);
+        Assert.AreEqual(
+            typeof(FakeCharacterSelectScreen).FullName,
+            result.Entries.Single(entry => entry.Label == "character select screen").TypeName);
+    }
+
+    [TestMethod]
     public void PassiveFormatterSummarizesLobbyLifecycle()
     {
         var line = PassiveTransportDiagnostics.FormatLobbyLifecycle(
@@ -61,6 +74,10 @@ public sealed class TransportSeamProbeTests
         }
     }
 
+    private interface IFakeStartRunLobbyListener
+    {
+    }
+
     private sealed class FakeSteamHost
     {
         public void SendMessageToClient(ulong playerId, object message) { }
@@ -75,5 +92,9 @@ public sealed class TransportSeamProbeTests
     {
         public void InitializeMultiplayerAsHost(FakeNetGameService service, int maxPlayers) { }
         public void InitializeMultiplayerAsClient(FakeNetGameService service) { }
+    }
+
+    private interface IFakeCharacterSelectButtonDelegate
+    {
     }
 }
