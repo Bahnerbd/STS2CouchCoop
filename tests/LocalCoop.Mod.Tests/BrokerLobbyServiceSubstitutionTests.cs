@@ -57,5 +57,10 @@ public sealed class BrokerLobbyServiceSubstitutionTests
         {
             return Task.CompletedTask;
         }
+
+        public Task<BrokerEnvelope?> ReceiveEnvelopeAsync(CancellationToken cancellationToken)
+        {
+            return Task.FromResult<BrokerEnvelope?>(null);
+        }
     }
 }

@@ -21,7 +21,7 @@ public static class Program
         var port = args.Length > 3 && int.TryParse(args[3], out var parsedPort) ? parsedPort : 38989;
         var gameExe = args.Length > 4
             ? args[4]
-            : Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "SlayTheSpire2.exe"));
+            : GameExecutablePathResolver.ResolveDefault(AppContext.BaseDirectory);
 
         var result = TwoClientHarnessPreparation.Prepare(rootDirectory, gameExe, sessionId, "127.0.0.1", port);
 

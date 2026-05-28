@@ -3,6 +3,7 @@ using LocalCoop.Protocol;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using LocalCoop.Broker;
 using System.Net;
+using System.Threading.Channels;
 using Runtime = LocalCoop.Mod.Runtime;
 
 namespace LocalCoop.Mod.Tests;
@@ -35,6 +36,27 @@ public sealed class BrokerBackedNetServiceTests
         Assert.AreEqual("client-1", envelope.TargetClientId);
         Assert.AreEqual(typeof(FakeLobbyMessage).AssemblyQualifiedName, envelope.MessageType);
         CollectionAssert.Contains(envelope.Payload, (byte)'r');
+    }
+
+    [TestMethod]
+    public async Task SendMessageLogsOutboundEnvelope()
+    {
+        var transport = new CapturingTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-0",
+            clientIndex: 0,
+            transport,
+            logs.Add);
+
+        await service.SendMessageAsync(new FakeLobbyMessage("ready"), targetPlayerId: BrokerPlayerId.ForClientIndex(1), CancellationToken.None);
+
+        StringAssert.Contains(logs.Single(), "Broker outbound");
+        StringAssert.Contains(logs.Single(), "local-test");
+        StringAssert.Contains(logs.Single(), "client-0");
+        StringAssert.Contains(logs.Single(), "client-1");
+        StringAssert.Contains(logs.Single(), nameof(FakeLobbyMessage));
     }
 
     [TestMethod]
@@ -95,6 +117,28 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task DispatchEnvelopeLogsInboundEnvelope()
+    {
+        var transport = new CapturingTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport, logs.Add);
+
+        await service.DispatchEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            new FakeLobbyMessage("ready"),
+            sequence: 1),
+            CancellationToken.None);
+
+        StringAssert.Contains(logs.Single(), "Broker inbound");
+        StringAssert.Contains(logs.Single(), "local-test");
+        StringAssert.Contains(logs.Single(), "client-0");
+        StringAssert.Contains(logs.Single(), "client-1");
+        StringAssert.Contains(logs.Single(), nameof(FakeLobbyMessage));
+    }
+
+    [TestMethod]
     public async Task DispatchEnvelopeInvokesRegisteredHandlerWithSenderId()
     {
         var transport = new CapturingTransport();
@@ -142,6 +186,43 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task ReceiveLoopDispatchesInboundEnvelopes()
+    {
+        var transport = new QueuedTransport();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
+        var receivedSource = new TaskCompletionSource<FakeLobbyMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        service.RegisterMessageHandler<FakeLobbyMessage>(message => receivedSource.SetResult(message));
+
+        var loop = service.RunReceiveLoopAsync(CancellationToken.None);
+        await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            new FakeLobbyMessage("appearance"),
+            sequence: 1));
+
+        var received = await receivedSource.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await transport.CompleteAsync();
+        await loop.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.AreEqual("appearance", received.Kind);
+    }
+
+    [TestMethod]
+    public async Task ReceiveLoopStopsWhenCanceled()
+    {
+        var transport = new QueuedTransport();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
+        using var cancellation = new CancellationTokenSource();
+
+        var loop = service.RunReceiveLoopAsync(cancellation.Token);
+        await cancellation.CancelAsync();
+        await loop.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.IsFalse(service.IsConnected);
+    }
+
+    [TestMethod]
     public async Task BrokerClientTransportSendsThroughConnection()
     {
         await using var server = new BrokerTcpServer("local-test", IPAddress.Loopback, port: 0);
@@ -177,6 +258,36 @@ public sealed class BrokerBackedNetServiceTests
         {
             Sent.Add(envelope);
             return Task.CompletedTask;
+        }
+
+        public Task<Runtime.BrokerEnvelope?> ReceiveEnvelopeAsync(CancellationToken cancellationToken)
+        {
+            return Task.FromResult<Runtime.BrokerEnvelope?>(null);
+        }
+    }
+
+    private sealed class QueuedTransport : IBrokerEnvelopeTransport
+    {
+        private readonly Channel<Runtime.BrokerEnvelope?> _incoming = Channel.CreateUnbounded<Runtime.BrokerEnvelope?>();
+
+        public Task SendEnvelopeAsync(Runtime.BrokerEnvelope envelope, CancellationToken cancellationToken)
+        {
+            return Task.CompletedTask;
+        }
+
+        public async Task<Runtime.BrokerEnvelope?> ReceiveEnvelopeAsync(CancellationToken cancellationToken)
+        {
+            return await _incoming.Reader.ReadAsync(cancellationToken);
+        }
+
+        public async Task QueueEnvelopeAsync(Runtime.BrokerEnvelope envelope)
+        {
+            await _incoming.Writer.WriteAsync(envelope);
+        }
+
+        public async Task CompleteAsync()
+        {
+            await _incoming.Writer.WriteAsync(null);
         }
     }
 }

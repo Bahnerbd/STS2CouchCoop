@@ -7,19 +7,23 @@ using MegaCrit.Sts2.Core.Multiplayer.Transport;
 
 namespace LocalCoop.Mod.Runtime;
 
-public sealed class BrokerNetGameService : INetHostGameService
+public sealed class BrokerNetGameService : INetHostGameService, IDisposable
 {
     private readonly BrokerBackedNetService _inner;
     private readonly NetGameType _type;
+    private readonly CancellationTokenSource _receiveLoopCancellation = new();
+    private readonly Task _receiveLoop;
     private readonly Dictionary<Delegate, Delegate> _registeredHandlers = new();
     private Action<NetErrorInfo>? _disconnected;
     private Action<ulong>? _clientConnected;
     private Action<ulong, NetErrorInfo>? _clientDisconnected;
+    private int _disposed;
 
     public BrokerNetGameService(BrokerBackedNetService inner, NetGameType type)
     {
         _inner = inner;
         _type = type;
+        _receiveLoop = _inner.RunReceiveLoopAsync(_receiveLoopCancellation.Token);
     }
 
     public ulong NetId => _inner.NetId;
@@ -93,6 +97,7 @@ public sealed class BrokerNetGameService : INetHostGameService
     public void Disconnect(NetError reason, bool now)
     {
         _inner.Disconnect();
+        Dispose();
     }
 
     public void DisconnectClient(ulong peerId, NetError reason, bool now)
@@ -116,5 +121,16 @@ public sealed class BrokerNetGameService : INetHostGameService
     public string GetRawLobbyIdentifier()
     {
         return _inner.GetRawLobbyIdentifier();
+    }
+
+    public void Dispose()
+    {
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        _receiveLoopCancellation.Cancel();
+        _receiveLoopCancellation.Dispose();
     }
 }

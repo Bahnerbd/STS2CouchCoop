@@ -13,4 +13,9 @@ public sealed class BrokerClientEnvelopeTransport : IBrokerEnvelopeTransport
     {
         return _connection.SendEnvelopeAsync(envelope, cancellationToken);
     }
+
+    public Task<BrokerEnvelope?> ReceiveEnvelopeAsync(CancellationToken cancellationToken)
+    {
+        return _connection.ReadEnvelopeAsync(cancellationToken);
+    }
 }

@@ -4,7 +4,8 @@ public static class BrokerNetServiceFactory
 {
     public static BrokerBackedNetService? TryCreate(
         BrokerModeSettings settings,
-        IBrokerEnvelopeTransport transport)
+        IBrokerEnvelopeTransport transport,
+        Action<string>? log = null)
     {
         if (!settings.Enabled || settings.Config is null)
         {
@@ -15,6 +16,7 @@ public static class BrokerNetServiceFactory
             settings.Config.SessionId,
             settings.ClientId,
             settings.Config.ClientIndex,
-            transport);
+            transport,
+            log);
     }
 }

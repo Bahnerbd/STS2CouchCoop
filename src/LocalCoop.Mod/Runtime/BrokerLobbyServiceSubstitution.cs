@@ -16,7 +16,7 @@ public static class BrokerLobbyServiceSubstitution
         }
 
         log($"Broker lobby service substitution connecting: clientId={settings.ClientId} endpoint={settings.Config.Host}:{settings.Config.Port} sessionId={settings.Config.SessionId}.");
-        var brokerService = BrokerNetServiceFactory.TryCreate(settings, createTransport());
+        var brokerService = BrokerNetServiceFactory.TryCreate(settings, createTransport(), log);
         if (brokerService is null)
         {
             return false;

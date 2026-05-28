@@ -5,6 +5,7 @@ public sealed class BrokerBackedNetService
     private readonly string _sessionId;
     private readonly string _clientId;
     private readonly IBrokerEnvelopeTransport _transport;
+    private readonly Action<string>? _log;
     private readonly Dictionary<string, List<Delegate>> _handlersByMessageType = new(StringComparer.Ordinal);
     private long _sequence;
 
@@ -12,7 +13,8 @@ public sealed class BrokerBackedNetService
         string sessionId,
         string clientId,
         int clientIndex,
-        IBrokerEnvelopeTransport transport)
+        IBrokerEnvelopeTransport transport,
+        Action<string>? log = null)
     {
         _sessionId = string.IsNullOrWhiteSpace(sessionId)
             ? throw new ArgumentException("Session id must not be blank.", nameof(sessionId))
@@ -22,6 +24,7 @@ public sealed class BrokerBackedNetService
             : clientId;
         NetId = BrokerPlayerId.ForClientIndex(clientIndex);
         _transport = transport;
+        _log = log;
     }
 
     public ulong NetId { get; }
@@ -89,6 +92,7 @@ public sealed class BrokerBackedNetService
             targetClientId,
             message,
             Interlocked.Increment(ref _sequence));
+        _log?.Invoke($"Broker outbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
         await _transport.SendEnvelopeAsync(envelope, cancellationToken);
     }
 
@@ -100,6 +104,30 @@ public sealed class BrokerBackedNetService
     public void SendMessage<T>(T message)
     {
         SendMessageAsync(message, targetPlayerId: null, CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    public async Task RunReceiveLoopAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                var envelope = await _transport.ReceiveEnvelopeAsync(cancellationToken).ConfigureAwait(false);
+                if (envelope is null)
+                {
+                    break;
+                }
+
+                await DispatchEnvelopeAsync(envelope, cancellationToken).ConfigureAwait(false);
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+        }
+        finally
+        {
+            IsConnected = false;
+        }
     }
 
     public void Update()
@@ -119,6 +147,7 @@ public sealed class BrokerBackedNetService
     public Task DispatchEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        _log?.Invoke($"Broker inbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
         if (!_handlersByMessageType.TryGetValue(envelope.MessageType, out var handlers))
         {
             return Task.CompletedTask;
