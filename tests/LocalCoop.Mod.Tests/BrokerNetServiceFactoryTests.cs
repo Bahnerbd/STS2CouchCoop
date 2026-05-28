@@ -1,5 +1,5 @@
 using LocalCoop.Mod.Runtime;
-using LocalCoop.Protocol;
+using MegaCrit.Sts2.Core.Multiplayer.Game;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace LocalCoop.Mod.Tests;
@@ -32,6 +32,19 @@ public sealed class BrokerNetServiceFactoryTests
         Assert.IsNotNull(service);
         Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), service.NetId);
         Assert.AreEqual("local-test", service.GetRawLobbyIdentifier());
+    }
+
+    [TestMethod]
+    public void BrokerNetGameServiceImplementsHostGameServiceForHostLobby()
+    {
+        var inner = new BrokerBackedNetService(
+            "local-test",
+            "client-0",
+            0,
+            new CapturingTransport());
+        var service = new BrokerNetGameService(inner, NetGameType.Host);
+
+        Assert.IsInstanceOfType<INetHostGameService>(service);
     }
 
     private sealed class CapturingTransport : IBrokerEnvelopeTransport

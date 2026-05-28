@@ -1,5 +1,3 @@
-using LocalCoop.Protocol;
-
 namespace LocalCoop.Mod.Runtime;
 
 public sealed class BrokerClientEnvelopeTransport : IBrokerEnvelopeTransport
@@ -16,4 +14,3 @@ public sealed class BrokerClientEnvelopeTransport : IBrokerEnvelopeTransport
         return _connection.SendEnvelopeAsync(envelope, cancellationToken);
     }
 }
-

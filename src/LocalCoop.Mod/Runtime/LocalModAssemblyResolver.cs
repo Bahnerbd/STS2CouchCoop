@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.Loader;
 
 namespace LocalCoop.Mod.Runtime;
@@ -9,6 +10,15 @@ public static class LocalModAssemblyResolver
     private static bool _installed;
     private static string? _modDirectory;
     private static AssemblyLoadContext? _loadContext;
+
+    // The mod loader scans types before calling the initializer, so dependency resolution must be available at module load.
+#pragma warning disable CA2255
+    [ModuleInitializer]
+    public static void InstallForModuleLoad()
+#pragma warning restore CA2255
+    {
+        Install(typeof(LocalModAssemblyResolver).Assembly);
+    }
 
     public static void Install(Assembly modAssembly)
     {

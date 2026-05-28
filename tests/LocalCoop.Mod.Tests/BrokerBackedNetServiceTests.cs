@@ -3,6 +3,7 @@ using LocalCoop.Protocol;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using LocalCoop.Broker;
 using System.Net;
+using Runtime = LocalCoop.Mod.Runtime;
 
 namespace LocalCoop.Mod.Tests;
 
@@ -94,6 +95,32 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task DispatchEnvelopeInvokesRegisteredHandlerWithSenderId()
+    {
+        var transport = new CapturingTransport();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
+        FakeLobbyMessage? received = null;
+        ulong? sender = null;
+        service.RegisterMessageHandler<FakeLobbyMessage>((message, senderId) =>
+        {
+            received = message;
+            sender = senderId;
+        });
+
+        await service.DispatchEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            new FakeLobbyMessage("ready"),
+            sequence: 1),
+            CancellationToken.None);
+
+        Assert.IsNotNull(received);
+        Assert.AreEqual("ready", received.Value.Kind);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), sender);
+    }
+
+    [TestMethod]
     public async Task UnregisterMessageHandlerStopsDispatch()
     {
         var transport = new CapturingTransport();
@@ -119,12 +146,12 @@ public sealed class BrokerBackedNetServiceTests
     {
         await using var server = new BrokerTcpServer("local-test", IPAddress.Loopback, port: 0);
         await server.StartAsync(CancellationToken.None);
-        await using var host = await BrokerClientConnection.ConnectAsync(
-            new BrokerClientConfig(BrokerClientRole.Host, 0, "127.0.0.1", server.Port, "local-test"),
+        await using var host = await Runtime.BrokerClientConnection.ConnectAsync(
+            new Runtime.BrokerClientConfig(Runtime.BrokerClientRole.Host, 0, "127.0.0.1", server.Port, "local-test"),
             "client-0",
             CancellationToken.None);
-        await using var client = await BrokerClientConnection.ConnectAsync(
-            new BrokerClientConfig(BrokerClientRole.Client, 1, "127.0.0.1", server.Port, "local-test"),
+        await using var client = await LocalCoop.Protocol.BrokerClientConnection.ConnectAsync(
+            new LocalCoop.Protocol.BrokerClientConfig(LocalCoop.Protocol.BrokerClientRole.Client, 1, "127.0.0.1", server.Port, "local-test"),
             "client-1",
             CancellationToken.None);
         var service = new BrokerBackedNetService(
@@ -144,9 +171,9 @@ public sealed class BrokerBackedNetServiceTests
 
     private sealed class CapturingTransport : IBrokerEnvelopeTransport
     {
-        public List<BrokerEnvelope> Sent { get; } = [];
+        public List<Runtime.BrokerEnvelope> Sent { get; } = [];
 
-        public Task SendEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
+        public Task SendEnvelopeAsync(Runtime.BrokerEnvelope envelope, CancellationToken cancellationToken)
         {
             Sent.Add(envelope);
             return Task.CompletedTask;

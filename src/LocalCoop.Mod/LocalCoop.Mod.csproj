@@ -7,9 +7,6 @@
     <OutputPath>../../../mods/LocalCoop/</OutputPath>
   </PropertyGroup>
   <ItemGroup>
-    <ProjectReference Include="..\LocalCoop.Protocol\LocalCoop.Protocol.csproj" />
-  </ItemGroup>
-  <ItemGroup>
     <Reference Include="0Harmony">
       <HintPath>../../../data_sts2_windows_x86_64/0Harmony.dll</HintPath>
       <Private>false</Private>

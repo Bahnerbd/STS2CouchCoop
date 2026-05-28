@@ -72,6 +72,20 @@ public sealed class InMemoryBrokerSession
         _clientIdsByIndex.Add(registration.ClientIndex, registration.ClientId);
     }
 
+    public void Unregister(string clientId)
+    {
+        if (!_clientsById.Remove(clientId, out var registration))
+        {
+            return;
+        }
+
+        _clientIdsByIndex.Remove(registration.ClientIndex);
+        if (string.Equals(HostClientId, clientId, StringComparison.Ordinal))
+        {
+            HostClientId = null;
+        }
+    }
+
     public IReadOnlyList<BrokerRoute> Route(BrokerEnvelope envelope)
     {
         if (!string.Equals(envelope.SessionId, SessionId, StringComparison.Ordinal))
@@ -101,4 +115,3 @@ public sealed class InMemoryBrokerSession
             .ToArray();
     }
 }
-

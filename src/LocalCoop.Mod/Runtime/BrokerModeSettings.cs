@@ -1,5 +1,3 @@
-using LocalCoop.Protocol;
-
 namespace LocalCoop.Mod.Runtime;
 
 public sealed record BrokerModeSettings(

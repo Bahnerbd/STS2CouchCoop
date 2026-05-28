@@ -1,4 +1,3 @@
-using LocalCoop.Protocol;
 using System.Text.Json;
 
 namespace LocalCoop.Mod.Runtime;
@@ -29,4 +28,3 @@ public static class BrokerEnvelopeMessageSerializer
             ?? throw new InvalidDataException($"Could not deserialize broker envelope as {targetType.FullName}.");
     }
 }
-

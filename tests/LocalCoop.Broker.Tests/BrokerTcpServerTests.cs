@@ -54,4 +54,50 @@ public sealed class BrokerTcpServerTests
         Assert.AreEqual("LobbyChanged", routed.Envelope?.MessageType);
         CollectionAssert.AreEqual(new byte[] { 8, 9 }, routed.Envelope?.Payload.ToArray());
     }
+
+    [TestMethod]
+    public async Task AllowsClientIndexToReconnectAfterDisconnect()
+    {
+        await using var server = new BrokerTcpServer("local-test", IPAddress.Loopback, port: 0);
+        await server.StartAsync(CancellationToken.None);
+
+        using (var firstHost = new TcpClient())
+        {
+            await firstHost.ConnectAsync(IPAddress.Loopback, server.Port);
+            await BrokerFrameCodec.WriteAsync(
+                firstHost.GetStream(),
+                BrokerTransportMessage.ForRegistration(new BrokerClientRegistrationDto("client-0", BrokerClientRole.Host, 0)),
+                CancellationToken.None);
+            var firstAccepted = await BrokerFrameCodec.ReadAsync(firstHost.GetStream(), CancellationToken.None);
+            Assert.AreEqual(BrokerTransportMessageKind.RegistrationAccepted, firstAccepted?.Kind);
+        }
+
+        await WaitForAsync(async () =>
+        {
+            using var secondHost = new TcpClient();
+            await secondHost.ConnectAsync(IPAddress.Loopback, server.Port);
+            await BrokerFrameCodec.WriteAsync(
+                secondHost.GetStream(),
+                BrokerTransportMessage.ForRegistration(new BrokerClientRegistrationDto("client-0", BrokerClientRole.Host, 0)),
+                CancellationToken.None);
+            var secondAccepted = await BrokerFrameCodec.ReadAsync(secondHost.GetStream(), CancellationToken.None);
+            return secondAccepted?.Kind == BrokerTransportMessageKind.RegistrationAccepted;
+        });
+    }
+
+    private static async Task WaitForAsync(Func<Task<bool>> condition)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(2);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (await condition())
+            {
+                return;
+            }
+
+            await Task.Delay(50);
+        }
+
+        Assert.Fail("Condition was not satisfied before timeout.");
+    }
 }

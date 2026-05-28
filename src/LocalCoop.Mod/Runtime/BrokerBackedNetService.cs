@@ -1,5 +1,3 @@
-using LocalCoop.Protocol;
-
 namespace LocalCoop.Mod.Runtime;
 
 public sealed class BrokerBackedNetService
@@ -34,7 +32,31 @@ public sealed class BrokerBackedNetService
 
     public void RegisterMessageHandler<T>(Action<T> handler)
     {
-        var key = MessageTypeKey<T>();
+        RegisterHandler(MessageTypeKey<T>(), handler);
+    }
+
+    public void RegisterMessageHandler<T>(Action<T, ulong> handler)
+    {
+        RegisterHandler(MessageTypeKey<T>(), handler);
+    }
+
+    public void UnregisterMessageHandler<T>(Action<T> handler)
+    {
+        UnregisterHandler(MessageTypeKey<T>(), handler);
+    }
+
+    public void UnregisterMessageHandler<T>(Action<T, ulong> handler)
+    {
+        UnregisterHandler(MessageTypeKey<T>(), handler);
+    }
+
+    public void Disconnect()
+    {
+        IsConnected = false;
+    }
+
+    private void RegisterHandler(string key, Delegate handler)
+    {
         if (!_handlersByMessageType.TryGetValue(key, out var handlers))
         {
             handlers = [];
@@ -44,9 +66,8 @@ public sealed class BrokerBackedNetService
         handlers.Add(handler);
     }
 
-    public void UnregisterMessageHandler<T>(Action<T> handler)
+    private void UnregisterHandler(string key, Delegate handler)
     {
-        var key = MessageTypeKey<T>();
         if (!_handlersByMessageType.TryGetValue(key, out var handlers))
         {
             return;
@@ -105,9 +126,17 @@ public sealed class BrokerBackedNetService
 
         foreach (var handler in handlers.ToArray())
         {
-            var parameterType = handler.Method.GetParameters().Single().ParameterType;
+            var parameters = handler.Method.GetParameters();
+            var parameterType = parameters[0].ParameterType;
             var message = BrokerEnvelopeMessageSerializer.Deserialize(envelope, parameterType);
-            handler.DynamicInvoke(message);
+            if (parameters.Length == 1)
+            {
+                handler.DynamicInvoke(message);
+            }
+            else
+            {
+                handler.DynamicInvoke(message, ClientIdToPlayerId(envelope.SourceClientId));
+            }
         }
 
         return Task.CompletedTask;
@@ -127,5 +156,14 @@ public sealed class BrokerBackedNetService
         }
 
         return $"client-{clientIndex}";
+    }
+
+    private static ulong ClientIdToPlayerId(string clientId)
+    {
+        const string prefix = "client-";
+        return clientId.StartsWith(prefix, StringComparison.Ordinal)
+            && int.TryParse(clientId[prefix.Length..], out var clientIndex)
+            ? BrokerPlayerId.ForClientIndex(clientIndex)
+            : 0;
     }
 }

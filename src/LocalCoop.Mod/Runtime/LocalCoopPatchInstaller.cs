@@ -8,9 +8,12 @@ public static class LocalCoopPatchInstaller
 {
     private static readonly Type[] DefaultPatchTypes =
     [
+        typeof(BrokerLobbyServiceSubstitutionPatch),
         typeof(LobbyLifecycleDiagnosticsPatches),
         typeof(NetServiceDiagnosticsPatches)
     ];
+
+    public static IReadOnlyList<Type> DefaultPatchTypesForTesting => DefaultPatchTypes;
 
     public static LocalCoopPatchInstallResult Install(
         Assembly assembly,

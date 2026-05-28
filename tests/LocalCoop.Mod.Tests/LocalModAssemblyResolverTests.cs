@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using LocalCoop.Mod.Runtime;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
@@ -31,6 +32,16 @@ public sealed class LocalModAssemblyResolverTests
             new AssemblyName("LocalCoop.Protocol, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null"));
 
         Assert.IsNull(result);
+    }
+
+    [TestMethod]
+    public void ResolverInstallsAtModuleLoadBeforeModLoaderScansTypes()
+    {
+        var initializer = typeof(LocalModAssemblyResolver)
+            .GetMethods(BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic)
+            .SingleOrDefault(method => method.GetCustomAttribute<ModuleInitializerAttribute>() is not null);
+
+        Assert.IsNotNull(initializer);
     }
 
     private static string CreateTempDirectory()

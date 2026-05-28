@@ -1,5 +1,4 @@
 using LocalCoop.Mod.Runtime;
-using LocalCoop.Protocol;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace LocalCoop.Mod.Tests;

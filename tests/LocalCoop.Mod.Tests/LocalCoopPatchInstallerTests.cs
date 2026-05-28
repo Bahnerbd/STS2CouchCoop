@@ -8,6 +8,14 @@ namespace LocalCoop.Mod.Tests;
 public sealed class LocalCoopPatchInstallerTests
 {
     [TestMethod]
+    public void DefaultPatchTypesIncludeBrokerLobbySubstitution()
+    {
+        CollectionAssert.Contains(
+            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
+            typeof(LocalCoop.Mod.Patches.BrokerLobbyServiceSubstitutionPatch));
+    }
+
+    [TestMethod]
     public void InstallLogsPatchFailuresWithoutThrowing()
     {
         var messages = new List<string>();

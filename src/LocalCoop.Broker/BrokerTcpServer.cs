@@ -89,65 +89,72 @@ public sealed class BrokerTcpServer : IAsyncDisposable
         var stream = client.GetStream();
         string? clientId = null;
 
-        while (!cancellationToken.IsCancellationRequested)
+        try
         {
-            var message = await BrokerFrameCodec.ReadAsync(stream, cancellationToken);
-            if (message is null)
+            while (!cancellationToken.IsCancellationRequested)
             {
-                return;
-            }
-
-            if (message.Kind == BrokerTransportMessageKind.Registration)
-            {
-                if (message.Registration is null)
+                var message = await BrokerFrameCodec.ReadAsync(stream, cancellationToken);
+                if (message is null)
                 {
-                    throw new InvalidDataException("Registration message did not include registration data.");
+                    return;
                 }
 
-                var registration = BrokerClientRegistration.FromDto(message.Registration);
-                _session.Register(registration);
-                clientId = registration.ClientId;
-                lock (_streamsLock)
+                if (message.Kind == BrokerTransportMessageKind.Registration)
                 {
-                    _streamsByClientId[clientId] = stream;
-                }
+                    if (message.Registration is null)
+                    {
+                        throw new InvalidDataException("Registration message did not include registration data.");
+                    }
 
-                await BrokerFrameCodec.WriteAsync(
-                    stream,
-                    BrokerTransportMessage.ForRegistrationAccepted(clientId, _session.SessionId),
-                    cancellationToken);
+                    var registration = BrokerClientRegistration.FromDto(message.Registration);
+                    _session.Register(registration);
+                    clientId = registration.ClientId;
+                    lock (_streamsLock)
+                    {
+                        _streamsByClientId[clientId] = stream;
+                    }
 
-                continue;
-            }
-
-            if (message.Envelope is null)
-            {
-                throw new InvalidDataException("Envelope message did not include an envelope.");
-            }
-
-            foreach (var route in _session.Route(message.Envelope))
-            {
-                NetworkStream? targetStream;
-                lock (_streamsLock)
-                {
-                    _streamsByClientId.TryGetValue(route.TargetClientId, out targetStream);
-                }
-
-                if (targetStream is not null)
-                {
                     await BrokerFrameCodec.WriteAsync(
-                        targetStream,
-                        BrokerTransportMessage.ForEnvelope(route.Envelope),
+                        stream,
+                        BrokerTransportMessage.ForRegistrationAccepted(clientId, _session.SessionId),
                         cancellationToken);
+
+                    continue;
+                }
+
+                if (message.Envelope is null)
+                {
+                    throw new InvalidDataException("Envelope message did not include an envelope.");
+                }
+
+                foreach (var route in _session.Route(message.Envelope))
+                {
+                    NetworkStream? targetStream;
+                    lock (_streamsLock)
+                    {
+                        _streamsByClientId.TryGetValue(route.TargetClientId, out targetStream);
+                    }
+
+                    if (targetStream is not null)
+                    {
+                        await BrokerFrameCodec.WriteAsync(
+                            targetStream,
+                            BrokerTransportMessage.ForEnvelope(route.Envelope),
+                            cancellationToken);
+                    }
                 }
             }
         }
-
-        if (clientId is not null)
+        finally
         {
-            lock (_streamsLock)
+            if (clientId is not null)
             {
-                _streamsByClientId.Remove(clientId);
+                lock (_streamsLock)
+                {
+                    _streamsByClientId.Remove(clientId);
+                }
+
+                _session.Unregister(clientId);
             }
         }
     }
