@@ -8,6 +8,8 @@ public static class LocalCoopPatchInstaller
 {
     private static readonly Type[] DefaultPatchTypes =
     [
+        typeof(BrokerClientJoinFlowPatch),
+        typeof(BrokerJoinFriendScreenPatch),
         typeof(BrokerLobbyServiceSubstitutionPatch),
         typeof(LobbyLifecycleDiagnosticsPatches),
         typeof(NetServiceDiagnosticsPatches)

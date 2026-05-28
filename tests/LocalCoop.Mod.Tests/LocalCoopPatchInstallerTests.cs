@@ -13,6 +13,12 @@ public sealed class LocalCoopPatchInstallerTests
         CollectionAssert.Contains(
             LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
             typeof(LocalCoop.Mod.Patches.BrokerLobbyServiceSubstitutionPatch));
+        CollectionAssert.Contains(
+            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
+            typeof(LocalCoop.Mod.Patches.BrokerClientJoinFlowPatch));
+        CollectionAssert.Contains(
+            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
+            typeof(LocalCoop.Mod.Patches.BrokerJoinFriendScreenPatch));
     }
 
     [TestMethod]
