@@ -213,6 +213,60 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task SendJoinResponseReplaysCachedLobbyCharacterStateToJoiningClient()
+    {
+        var transport = new CapturingTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-0",
+            clientIndex: 0,
+            transport,
+            logs.Add);
+        await service.DispatchEnvelopeAsync(EnvelopeFor<LobbyPlayerChangedCharacterMessage>("client-0", targetClientId: null, sequence: 7), CancellationToken.None);
+        var joinResponse = new ClientLobbyJoinResponseMessage
+        {
+            playersInLobby = [],
+            modifiers = []
+        };
+
+        await service.SendMessageAsync(joinResponse, BrokerPlayerId.ForClientIndex(1), CancellationToken.None);
+
+        Assert.AreEqual(2, transport.Sent.Count);
+        Assert.AreEqual(typeof(ClientLobbyJoinResponseMessage).AssemblyQualifiedName, transport.Sent[0].MessageType);
+        var replay = transport.Sent[1];
+        Assert.AreEqual("local-test", replay.SessionId);
+        Assert.AreEqual("client-0", replay.SourceClientId);
+        Assert.AreEqual("client-1", replay.TargetClientId);
+        Assert.AreEqual(typeof(LobbyPlayerChangedCharacterMessage).AssemblyQualifiedName, replay.MessageType);
+        Assert.AreEqual(2, replay.Sequence);
+        Assert.IsTrue(logs.Any(log => log.Contains("Broker replay outbound", StringComparison.Ordinal)
+            && log.Contains(nameof(LobbyPlayerChangedCharacterMessage), StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public async Task SendJoinResponseDoesNotReplayJoiningClientsOwnCachedCharacterState()
+    {
+        var transport = new CapturingTransport();
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-0",
+            clientIndex: 0,
+            transport);
+        await service.DispatchEnvelopeAsync(EnvelopeFor<LobbyPlayerChangedCharacterMessage>("client-1", targetClientId: null, sequence: 7), CancellationToken.None);
+        var joinResponse = new ClientLobbyJoinResponseMessage
+        {
+            playersInLobby = [],
+            modifiers = []
+        };
+
+        await service.SendMessageAsync(joinResponse, BrokerPlayerId.ForClientIndex(1), CancellationToken.None);
+
+        Assert.AreEqual(1, transport.Sent.Count);
+        Assert.AreEqual(typeof(ClientLobbyJoinResponseMessage).AssemblyQualifiedName, transport.Sent[0].MessageType);
+    }
+
+    [TestMethod]
     public void TracksConnectionLoadingAndRawLobbyIdentifier()
     {
         var service = new BrokerBackedNetService(

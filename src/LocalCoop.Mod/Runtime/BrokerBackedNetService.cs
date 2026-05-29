@@ -10,6 +10,8 @@ public sealed class BrokerBackedNetService
     private readonly IBrokerEnvelopeTransport _transport;
     private readonly Action<string>? _log;
     private readonly Dictionary<string, List<Delegate>> _handlersByMessageType = new(StringComparer.Ordinal);
+    private readonly Dictionary<string, BrokerEnvelope> _latestLobbyCharacterBySourceClientId = new(StringComparer.Ordinal);
+    private readonly object _latestLobbyCharacterGate = new();
     private long _sequence;
     private long _lastInboundRemoteCharacterChangeUtcTicks;
     private bool _hasReceivedHostJoinResponse;
@@ -105,8 +107,13 @@ public sealed class BrokerBackedNetService
             targetClientId,
             message,
             Interlocked.Increment(ref _sequence));
+        RecordLatestLobbyCharacter(envelope);
         _log?.Invoke($"Broker outbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
         await _transport.SendEnvelopeAsync(envelope, cancellationToken);
+        if (IsClientLobbyJoinResponse(envelope) && targetClientId is not null)
+        {
+            await ReplayLatestLobbyCharactersAsync(targetClientId, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     public void SendMessage<T>(T message, ulong playerId)
@@ -222,6 +229,7 @@ public sealed class BrokerBackedNetService
         {
             System.Threading.Volatile.Write(ref _lastInboundRemoteCharacterChangeUtcTicks, DateTime.UtcNow.Ticks);
         }
+        RecordLatestLobbyCharacter(envelope);
 
         _log?.Invoke($"Broker inbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
         if (IsClientLobbyJoinResponse(envelope))
@@ -257,6 +265,44 @@ public sealed class BrokerBackedNetService
         return envelope.MessageType.StartsWith(
             "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.ClientLobbyJoinResponseMessage,",
             StringComparison.Ordinal);
+    }
+
+    private void RecordLatestLobbyCharacter(BrokerEnvelope envelope)
+    {
+        if (!IsLobbyPlayerChangedCharacter(envelope))
+        {
+            return;
+        }
+
+        lock (_latestLobbyCharacterGate)
+        {
+            _latestLobbyCharacterBySourceClientId[envelope.SourceClientId] = envelope;
+        }
+    }
+
+    private async Task ReplayLatestLobbyCharactersAsync(string targetClientId, CancellationToken cancellationToken)
+    {
+        BrokerEnvelope[] cachedCharacters;
+        lock (_latestLobbyCharacterGate)
+        {
+            cachedCharacters = _latestLobbyCharacterBySourceClientId.Values.ToArray();
+        }
+
+        foreach (var cachedCharacter in cachedCharacters)
+        {
+            if (string.Equals(cachedCharacter.SourceClientId, targetClientId, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var replay = cachedCharacter with
+            {
+                TargetClientId = targetClientId,
+                Sequence = Interlocked.Increment(ref _sequence)
+            };
+            _log?.Invoke($"Broker replay outbound: sessionId={replay.SessionId} source={replay.SourceClientId} target={replay.TargetClientId ?? "broadcast"} messageType={replay.MessageType} sequence={replay.Sequence}.");
+            await _transport.SendEnvelopeAsync(replay, cancellationToken).ConfigureAwait(false);
+        }
     }
 
     private static bool IsLobbyPlayerChangedCharacter(BrokerEnvelope envelope)
