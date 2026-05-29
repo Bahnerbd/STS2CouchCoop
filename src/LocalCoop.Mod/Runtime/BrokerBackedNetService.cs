@@ -4,10 +4,12 @@ public sealed class BrokerBackedNetService
 {
     private readonly string _sessionId;
     private readonly string _clientId;
+    private readonly int _clientIndex;
     private readonly IBrokerEnvelopeTransport _transport;
     private readonly Action<string>? _log;
     private readonly Dictionary<string, List<Delegate>> _handlersByMessageType = new(StringComparer.Ordinal);
     private long _sequence;
+    private bool _hasReceivedHostJoinResponse;
 
     public BrokerBackedNetService(
         string sessionId,
@@ -22,6 +24,8 @@ public sealed class BrokerBackedNetService
         _clientId = string.IsNullOrWhiteSpace(clientId)
             ? throw new ArgumentException("Client id must not be blank.", nameof(clientId))
             : clientId;
+        _clientIndex = clientIndex;
+        _hasReceivedHostJoinResponse = clientIndex == 0;
         NetId = BrokerPlayerId.ForClientIndex(clientIndex);
         _transport = transport;
         _log = log;
@@ -157,7 +161,7 @@ public sealed class BrokerBackedNetService
         return _sessionId;
     }
 
-    private static bool ShouldSuppressOutboundMessage<T>(T message, out string reason)
+    private bool ShouldSuppressOutboundMessage<T>(T message, out string reason)
     {
         var messageType = typeof(T);
         if (string.Equals(messageType.FullName, "MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync.PeerInputMessage", StringComparison.Ordinal))
@@ -170,6 +174,14 @@ public sealed class BrokerBackedNetService
             && IsNullCharacterChange(message))
         {
             reason = "null character change is an initialization artifact";
+            return true;
+        }
+
+        if (_clientIndex != 0
+            && !_hasReceivedHostJoinResponse
+            && string.Equals(messageType.FullName, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerChangedCharacterMessage", StringComparison.Ordinal))
+        {
+            reason = "waiting for host join response";
             return true;
         }
 
@@ -194,6 +206,11 @@ public sealed class BrokerBackedNetService
     {
         cancellationToken.ThrowIfCancellationRequested();
         _log?.Invoke($"Broker inbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
+        if (IsClientLobbyJoinResponse(envelope))
+        {
+            _hasReceivedHostJoinResponse = true;
+        }
+
         if (!_handlersByMessageType.TryGetValue(envelope.MessageType, out var handlers))
         {
             return Task.CompletedTask;
@@ -215,6 +232,13 @@ public sealed class BrokerBackedNetService
         }
 
         return Task.CompletedTask;
+    }
+
+    private static bool IsClientLobbyJoinResponse(BrokerEnvelope envelope)
+    {
+        return envelope.MessageType.StartsWith(
+            "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.ClientLobbyJoinResponseMessage,",
+            StringComparison.Ordinal);
     }
 
     private void InvokeHandler(Delegate handler, params object?[] args)

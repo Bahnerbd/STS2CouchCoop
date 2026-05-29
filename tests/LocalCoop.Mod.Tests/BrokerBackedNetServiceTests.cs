@@ -2,9 +2,11 @@ using LocalCoop.Mod.Runtime;
 using LocalCoop.Protocol;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using LocalCoop.Broker;
+using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
+using System.Runtime.CompilerServices;
 using System.Net;
 using System.Threading.Channels;
 using Runtime = LocalCoop.Mod.Runtime;
@@ -116,6 +118,31 @@ public sealed class BrokerBackedNetServiceTests
         Assert.AreEqual(0, transport.Sent.Count);
         Assert.IsTrue(logs.Any(log => log.Contains("suppressed outbound", StringComparison.Ordinal)
             && log.Contains(nameof(LobbyPlayerChangedCharacterMessage), StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void ClientSendMessageSkipsCharacterChangesBeforeHostJoinResponse()
+    {
+        var transport = new CapturingTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-1",
+            clientIndex: 1,
+            transport,
+            logs.Add);
+        var concreteCharacterType = typeof(CharacterModel).Assembly.GetTypes()
+            .First(type => !type.IsAbstract && typeof(CharacterModel).IsAssignableFrom(type));
+        var message = new LobbyPlayerChangedCharacterMessage
+        {
+            character = (CharacterModel)RuntimeHelpers.GetUninitializedObject(concreteCharacterType)
+        };
+
+        service.SendMessage(message);
+
+        Assert.AreEqual(0, transport.Sent.Count);
+        Assert.IsTrue(logs.Any(log => log.Contains("suppressed outbound", StringComparison.Ordinal)
+            && log.Contains("waiting for host join response", StringComparison.Ordinal)));
     }
 
     [TestMethod]
