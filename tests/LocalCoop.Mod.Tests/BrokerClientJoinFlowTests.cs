@@ -68,6 +68,30 @@ public sealed class BrokerClientJoinFlowTests
     }
 
     [TestMethod]
+    public void CreateStandardLobbyJoinResultCanSeedFourIdentityPlayersWithRuntimeHostFirst()
+    {
+        var result = BrokerClientJoinFlow.CreateStandardLobbyJoinResult(
+            localClientIndex: 3,
+            hostClientIndex: 2,
+            clientCount: 4);
+        var players = result.joinResponse!.Value.playersInLobby;
+
+        Assert.IsNotNull(players);
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                BrokerPlayerId.ForClientIndex(2),
+                BrokerPlayerId.ForClientIndex(0),
+                BrokerPlayerId.ForClientIndex(1),
+                BrokerPlayerId.ForClientIndex(3)
+            },
+            players!.Select(player => player.id).ToArray());
+        CollectionAssert.AreEqual(new[] { 0, 1, 2, 3 }, players.Select(player => player.slotId).ToArray());
+        Assert.IsTrue(players.All(player => player.character is null));
+        Assert.IsTrue(players.All(player => !player.isReady));
+    }
+
+    [TestMethod]
     public void PlaceholderInitializerCompletesWithoutSteamConnection()
     {
         var initializer = new BrokerClientJoinFlow.PlaceholderClientConnectionInitializer();

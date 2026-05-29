@@ -24,26 +24,54 @@ public static class BrokerClientJoinFlow
 
     public static JoinResult CreateStandardLobbyJoinResult(int localClientIndex)
     {
+        var hostClientIndex = localClientIndex == 0 ? 1 : 0;
+        var clientCount = Math.Max(2, Math.Max(localClientIndex, hostClientIndex) + 1);
+        return CreateStandardLobbyJoinResult(localClientIndex, hostClientIndex, clientCount);
+    }
+
+    public static JoinResult CreateStandardLobbyJoinResult(
+        int localClientIndex,
+        int hostClientIndex,
+        int clientCount)
+    {
         return new JoinResult
         {
             gameMode = GameMode.Standard,
             sessionState = RunSessionState.InLobby,
             joinResponse = new ClientLobbyJoinResponseMessage
             {
-                playersInLobby = CreateInitialLobbyPlayers(localClientIndex),
+                playersInLobby = CreateInitialLobbyPlayers(localClientIndex, hostClientIndex, clientCount),
                 modifiers = []
             }
         };
     }
 
-    private static List<LobbyPlayer> CreateInitialLobbyPlayers(int localClientIndex)
+    private static List<LobbyPlayer> CreateInitialLobbyPlayers(
+        int localClientIndex,
+        int hostClientIndex,
+        int clientCount)
     {
-        var hostClientIndex = localClientIndex == 0 ? 1 : 0;
-        return
-        [
-            CreateLobbyPlayer(hostClientIndex, slotId: 0),
-            CreateLobbyPlayer(localClientIndex, slotId: 1)
-        ];
+        if (clientCount is < 2 or > 4)
+        {
+            throw new ArgumentOutOfRangeException(nameof(clientCount), "Client count must be 2 through 4.");
+        }
+
+        if (localClientIndex < 0 || localClientIndex >= clientCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(localClientIndex), "Local client index must be within the client count.");
+        }
+
+        if (hostClientIndex < 0 || hostClientIndex >= clientCount)
+        {
+            throw new ArgumentOutOfRangeException(nameof(hostClientIndex), "Host client index must be within the client count.");
+        }
+
+        var orderedClientIndexes = new[] { hostClientIndex }
+            .Concat(Enumerable.Range(0, clientCount).Where(index => index != hostClientIndex))
+            .ToArray();
+        return orderedClientIndexes
+            .Select((clientIndex, slotId) => CreateLobbyPlayer(clientIndex, slotId))
+            .ToList();
     }
 
     private static LobbyPlayer CreateLobbyPlayer(int clientIndex, int slotId)
