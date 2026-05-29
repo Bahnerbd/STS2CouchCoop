@@ -19,7 +19,8 @@ public static class TransportSeamProbe
         ("start run lobby", type => type.Name.Contains("StartRunLobby", StringComparison.OrdinalIgnoreCase), "StartRunLobby"),
         ("steam host transport", type => type.Name.Contains("SteamHost", StringComparison.OrdinalIgnoreCase), "SteamHost"),
         ("steam client transport", type => type.Name.Contains("SteamClient", StringComparison.OrdinalIgnoreCase), "SteamClient"),
-        ("character select screen", type => type.Name.Contains("CharacterSelect", StringComparison.OrdinalIgnoreCase), "NCharacterSelectScreen")
+        ("character select screen", type => type.Name.Contains("CharacterSelect", StringComparison.OrdinalIgnoreCase)
+            && type.Name.Contains("Screen", StringComparison.OrdinalIgnoreCase), "NCharacterSelectScreen")
     ];
 
     private static readonly string[] InterestingMethodNames =

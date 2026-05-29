@@ -13,6 +13,7 @@ public static class LocalCoopPatchInstaller
         typeof(BrokerClientLobbyHandshakePatch),
         typeof(BrokerLobbyServiceSubstitutionPatch),
         typeof(BrokerBeginRunPatch),
+        typeof(CharacterSelectInputDiagnosticsPatches),
         typeof(LobbyLifecycleDiagnosticsPatches),
         typeof(NetServiceDiagnosticsPatches)
     ];
