@@ -13,12 +13,14 @@ public sealed class BrokerBackedNetService
     private readonly Dictionary<string, List<Delegate>> _handlersByMessageType = new(StringComparer.Ordinal);
     private readonly Dictionary<string, BrokerEnvelope> _latestLobbyCharacterBySourceClientId = new(StringComparer.Ordinal);
     private readonly object _latestLobbyCharacterGate = new();
+    private readonly object _pendingLocalCharacterGate = new();
     private readonly BrokerLobbyMessageCoordinator _messageCoordinator;
     private readonly Dictionary<ulong, bool> _knownPeersById = [];
     private readonly object _knownPeerGate = new();
     private long _sequence;
     private int _isApplyingInboundRemoteLobbyState;
     private bool _hasReceivedHostJoinResponse;
+    private Func<long, BrokerEnvelope>? _pendingLocalCharacterBeforeJoinResponse;
 
     public BrokerBackedNetService(
         string sessionId,
@@ -132,13 +134,14 @@ public sealed class BrokerBackedNetService
 
     public async Task SendMessageAsync<T>(T message, ulong? targetPlayerId, CancellationToken cancellationToken)
     {
+        var targetClientId = targetPlayerId is null ? GetDefaultTargetClientId() : PlayerIdToClientId(targetPlayerId.Value);
         if (ShouldSuppressOutboundMessage(message, out var reason))
         {
-            _log?.Invoke($"Broker suppressed outbound: sessionId={_sessionId} source={_clientId} messageType={MessageTypeKey<T>()} reason={reason}.");
+            CachePendingLocalCharacterBeforeJoinResponse(message, targetClientId, reason);
+            _log?.Invoke($"Broker suppressed outbound: sessionId={_sessionId} source={_clientId} messageType={MessageTypeKey<T>()} reason={reason}{PayloadSuffix(message)}.");
             return;
         }
 
-        var targetClientId = targetPlayerId is null ? GetDefaultTargetClientId() : PlayerIdToClientId(targetPlayerId.Value);
         var envelope = BrokerEnvelopeMessageSerializer.ToEnvelope(
             _sessionId,
             _clientId,
@@ -300,7 +303,7 @@ public sealed class BrokerBackedNetService
         return characterField is not null && characterField.GetValue(message) is null;
     }
 
-    public Task DispatchEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
+    public async Task DispatchEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         var isInboundRemoteLobbyState = IsLobbyStateMessage(envelope)
@@ -312,11 +315,12 @@ public sealed class BrokerBackedNetService
         if (IsClientLobbyJoinResponse(envelope))
         {
             _hasReceivedHostJoinResponse = true;
+            await FlushPendingLocalCharacterAfterJoinResponseAsync(cancellationToken).ConfigureAwait(false);
         }
 
         if (!_handlersByMessageType.TryGetValue(envelope.MessageType, out var handlers))
         {
-            return Task.CompletedTask;
+            return;
         }
 
         if (isInboundRemoteLobbyState)
@@ -348,8 +352,6 @@ public sealed class BrokerBackedNetService
                 System.Threading.Volatile.Write(ref _isApplyingInboundRemoteLobbyState, 0);
             }
         }
-
-        return Task.CompletedTask;
     }
 
     private static bool IsClientLobbyJoinResponse(BrokerEnvelope envelope)
@@ -376,6 +378,55 @@ public sealed class BrokerBackedNetService
         lock (_latestLobbyCharacterGate)
         {
             _latestLobbyCharacterBySourceClientId[envelope.SourceClientId] = envelope;
+        }
+    }
+
+    private void CachePendingLocalCharacterBeforeJoinResponse<T>(T message, string? targetClientId, string reason)
+    {
+        if (_role != BrokerClientRole.Client
+            || _hasReceivedHostJoinResponse
+            || !reason.Contains("waiting for host join response", StringComparison.Ordinal)
+            || !IsLobbyPlayerChangedCharacter(typeof(T)))
+        {
+            return;
+        }
+
+        lock (_pendingLocalCharacterGate)
+        {
+            _pendingLocalCharacterBeforeJoinResponse = sequence => BrokerEnvelopeMessageSerializer.ToEnvelope(
+                _sessionId,
+                _clientId,
+                targetClientId,
+                message,
+                sequence);
+        }
+    }
+
+    private async Task FlushPendingLocalCharacterAfterJoinResponseAsync(CancellationToken cancellationToken)
+    {
+        Func<long, BrokerEnvelope>? pending;
+        lock (_pendingLocalCharacterGate)
+        {
+            pending = _pendingLocalCharacterBeforeJoinResponse;
+            _pendingLocalCharacterBeforeJoinResponse = null;
+        }
+
+        if (pending is null)
+        {
+            return;
+        }
+
+        try
+        {
+            var envelope = pending(Interlocked.Increment(ref _sequence));
+            RecordLatestLobbyCharacter(envelope);
+            TrackKnownPeers(envelope);
+            _log?.Invoke($"Broker pending outbound flushed: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}{PayloadSuffix(envelope)}.");
+            await _transport.SendEnvelopeAsync(envelope, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception exception)
+        {
+            _log?.Invoke($"Broker pending outbound flush failed: sessionId={_sessionId} source={_clientId}: {exception.GetType().Name}: {exception.Message}");
         }
     }
 

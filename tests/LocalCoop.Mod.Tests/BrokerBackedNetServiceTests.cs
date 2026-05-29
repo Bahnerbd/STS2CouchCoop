@@ -147,6 +147,65 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task ClientFlushesCachedCharacterChangeAfterHostJoinResponse()
+    {
+        var transport = new CapturingTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-1",
+            clientIndex: 1,
+            transport,
+            logs.Add);
+        SetPendingLocalCharacter(service, EnvelopeFor<LobbyPlayerChangedCharacterMessage>(
+            "client-1",
+            targetClientId: "client-0",
+            sequence: 0));
+        await service.DispatchEnvelopeAsync(EnvelopeForMessage(
+            "client-0",
+            targetClientId: "client-1",
+            new ClientLobbyJoinResponseMessage { playersInLobby = [], modifiers = [] },
+            sequence: 1),
+            CancellationToken.None);
+
+        var envelope = transport.Sent.Single();
+        Assert.AreEqual("client-1", envelope.SourceClientId);
+        Assert.AreEqual("client-0", envelope.TargetClientId);
+        Assert.AreEqual(typeof(LobbyPlayerChangedCharacterMessage).AssemblyQualifiedName, envelope.MessageType);
+        Assert.AreEqual(1, envelope.Sequence);
+        Assert.IsTrue(logs.Any(log => log.Contains("pending outbound flushed", StringComparison.Ordinal)
+            && log.Contains(nameof(LobbyPlayerChangedCharacterMessage), StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public async Task FailedPendingCharacterFlushDoesNotBlockJoinResponseDispatch()
+    {
+        var transport = new CapturingTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-1",
+            clientIndex: 1,
+            transport,
+            logs.Add);
+        SetPendingLocalCharacter(service, _ => throw new InvalidDataException("bad character payload"));
+        var receivedCount = 0;
+        service.RegisterMessageHandler<ClientLobbyJoinResponseMessage>(_ => receivedCount++);
+
+        await service.DispatchEnvelopeAsync(EnvelopeForMessage(
+            "client-0",
+            targetClientId: "client-1",
+            new ClientLobbyJoinResponseMessage { playersInLobby = [], modifiers = [] },
+            sequence: 1),
+            CancellationToken.None);
+
+        Assert.AreEqual(1, receivedCount);
+        Assert.AreEqual(0, transport.Sent.Count);
+        Assert.IsTrue(logs.Any(log => log.Contains("pending outbound flush failed", StringComparison.Ordinal)
+            && log.Contains("bad character payload", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
     public async Task SendJoinResponseReplaysCachedLobbyCharacterStateToJoiningClient()
     {
         var transport = new CapturingTransport();
@@ -759,6 +818,18 @@ public sealed class BrokerBackedNetServiceTests
             typeof(T).AssemblyQualifiedName ?? typeof(T).FullName ?? typeof(T).Name,
             [],
             sequence);
+    }
+
+    private static void SetPendingLocalCharacter(BrokerBackedNetService service, Runtime.BrokerEnvelope envelope)
+    {
+        SetPendingLocalCharacter(service, sequence => envelope with { Sequence = sequence });
+    }
+
+    private static void SetPendingLocalCharacter(BrokerBackedNetService service, Func<long, Runtime.BrokerEnvelope> pending)
+    {
+        typeof(BrokerBackedNetService)
+            .GetField("_pendingLocalCharacterBeforeJoinResponse", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .SetValue(service, pending);
     }
 
     private static Runtime.BrokerEnvelope EnvelopeForMessage<T>(string sourceClientId, string? targetClientId, T message, long sequence)
