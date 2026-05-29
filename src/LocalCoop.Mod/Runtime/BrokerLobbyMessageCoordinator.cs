@@ -21,16 +21,13 @@ public sealed class BrokerLobbyMessageCoordinator
         "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.ClientLobbyJoinResponseMessage"
     ];
 
-    private readonly Action<string>? _log;
     private readonly object _gate = new();
     private readonly List<BrokerEnvelope> _pendingFifo = [];
-    private readonly Dictionary<StateKey, BrokerEnvelope> _pendingStateByKey = new();
-    private readonly List<StateKey> _pendingStateOrder = [];
     private bool _isLobbyReady;
 
     public BrokerLobbyMessageCoordinator(Action<string>? log = null)
     {
-        _log = log;
+        _ = log;
     }
 
     public void MarkLobbyReady()
@@ -45,12 +42,6 @@ public sealed class BrokerLobbyMessageCoordinator
     {
         lock (_gate)
         {
-            if (IsLobbyStateMessage(envelope))
-            {
-                EnqueueState(envelope);
-                return;
-            }
-
             _pendingFifo.Add(envelope);
         }
     }
@@ -61,30 +52,8 @@ public sealed class BrokerLobbyMessageCoordinator
         {
             var dispatchable = new List<BrokerEnvelope>();
             DrainFifo(registeredMessageTypes, dispatchable);
-            DrainState(registeredMessageTypes, dispatchable);
             return dispatchable;
         }
-    }
-
-    private void EnqueueState(BrokerEnvelope envelope)
-    {
-        var key = new StateKey(envelope.SourceClientId, envelope.MessageType);
-        if (_pendingStateByKey.TryGetValue(key, out var existing))
-        {
-            if (existing.Payload.SequenceEqual(envelope.Payload))
-            {
-                _log?.Invoke($"Broker inbound duplicate state ignored: source={envelope.SourceClientId} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
-                return;
-            }
-
-            _log?.Invoke($"Broker inbound state coalesced: source={envelope.SourceClientId} messageType={envelope.MessageType} previousSequence={existing.Sequence} sequence={envelope.Sequence}.");
-        }
-        else
-        {
-            _pendingStateOrder.Add(key);
-        }
-
-        _pendingStateByKey[key] = envelope;
     }
 
     private void DrainFifo(IReadOnlySet<string> registeredMessageTypes, List<BrokerEnvelope> dispatchable)
@@ -100,24 +69,6 @@ public sealed class BrokerLobbyMessageCoordinator
 
             dispatchable.Add(envelope);
             _pendingFifo.RemoveAt(index);
-        }
-    }
-
-    private void DrainState(IReadOnlySet<string> registeredMessageTypes, List<BrokerEnvelope> dispatchable)
-    {
-        for (var index = 0; index < _pendingStateOrder.Count;)
-        {
-            var key = _pendingStateOrder[index];
-            var envelope = _pendingStateByKey[key];
-            if (!CanDispatchLobbyMessage(envelope, registeredMessageTypes))
-            {
-                index++;
-                continue;
-            }
-
-            dispatchable.Add(envelope);
-            _pendingStateByKey.Remove(key);
-            _pendingStateOrder.RemoveAt(index);
         }
     }
 
@@ -149,5 +100,4 @@ public sealed class BrokerLobbyMessageCoordinator
             || messageType.StartsWith(typeName + ",", StringComparison.Ordinal));
     }
 
-    private readonly record struct StateKey(string SourceClientId, string MessageType);
 }

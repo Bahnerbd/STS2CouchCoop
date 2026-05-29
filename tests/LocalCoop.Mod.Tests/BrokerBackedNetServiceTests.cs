@@ -66,6 +66,24 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task SendMessageLogsThinTransportForLobbyMessage()
+    {
+        var transport = new CapturingTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-0",
+            clientIndex: 0,
+            transport,
+            logs.Add);
+
+        await service.SendMessageAsync(new LobbyPlayerSetReadyMessage { ready = true }, targetPlayerId: null, CancellationToken.None);
+
+        Assert.IsTrue(logs.Any(log => log.Contains("Broker thin transport outbound lobby message", StringComparison.Ordinal)
+            && log.Contains(nameof(LobbyPlayerSetReadyMessage), StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
     public void SyncSendMessageBroadcastCreatesTypedEnvelope()
     {
         var transport = new CapturingTransport();
@@ -122,7 +140,7 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
-    public void ClientSendMessageSkipsCharacterChangesBeforeHostJoinResponse()
+    public void ClientCharacterChangesBeforeHostJoinResponseAreNotSuppressed()
     {
         var transport = new CapturingTransport();
         var logs = new List<string>();
@@ -139,74 +157,15 @@ public sealed class BrokerBackedNetServiceTests
             character = (CharacterModel)RuntimeHelpers.GetUninitializedObject(concreteCharacterType)
         };
 
-        service.SendMessage(message);
+        var suppressed = IsOutboundSuppressed(service, message, out var reason);
 
+        Assert.IsFalse(suppressed, reason);
         Assert.AreEqual(0, transport.Sent.Count);
-        Assert.IsTrue(logs.Any(log => log.Contains("suppressed outbound", StringComparison.Ordinal)
-            && log.Contains("waiting for host join response", StringComparison.Ordinal)));
+        Assert.AreEqual(0, logs.Count);
     }
 
     [TestMethod]
-    public async Task ClientFlushesCachedCharacterChangeAfterHostJoinResponse()
-    {
-        var transport = new CapturingTransport();
-        var logs = new List<string>();
-        var service = new BrokerBackedNetService(
-            sessionId: "local-test",
-            clientId: "client-1",
-            clientIndex: 1,
-            transport,
-            logs.Add);
-        SetPendingLocalCharacter(service, EnvelopeFor<LobbyPlayerChangedCharacterMessage>(
-            "client-1",
-            targetClientId: "client-0",
-            sequence: 0));
-        await service.DispatchEnvelopeAsync(EnvelopeForMessage(
-            "client-0",
-            targetClientId: "client-1",
-            new ClientLobbyJoinResponseMessage { playersInLobby = [], modifiers = [] },
-            sequence: 1),
-            CancellationToken.None);
-
-        var envelope = transport.Sent.Single();
-        Assert.AreEqual("client-1", envelope.SourceClientId);
-        Assert.AreEqual("client-0", envelope.TargetClientId);
-        Assert.AreEqual(typeof(LobbyPlayerChangedCharacterMessage).AssemblyQualifiedName, envelope.MessageType);
-        Assert.AreEqual(1, envelope.Sequence);
-        Assert.IsTrue(logs.Any(log => log.Contains("pending outbound flushed", StringComparison.Ordinal)
-            && log.Contains(nameof(LobbyPlayerChangedCharacterMessage), StringComparison.Ordinal)));
-    }
-
-    [TestMethod]
-    public async Task FailedPendingCharacterFlushDoesNotBlockJoinResponseDispatch()
-    {
-        var transport = new CapturingTransport();
-        var logs = new List<string>();
-        var service = new BrokerBackedNetService(
-            sessionId: "local-test",
-            clientId: "client-1",
-            clientIndex: 1,
-            transport,
-            logs.Add);
-        SetPendingLocalCharacter(service, _ => throw new InvalidDataException("bad character payload"));
-        var receivedCount = 0;
-        service.RegisterMessageHandler<ClientLobbyJoinResponseMessage>(_ => receivedCount++);
-
-        await service.DispatchEnvelopeAsync(EnvelopeForMessage(
-            "client-0",
-            targetClientId: "client-1",
-            new ClientLobbyJoinResponseMessage { playersInLobby = [], modifiers = [] },
-            sequence: 1),
-            CancellationToken.None);
-
-        Assert.AreEqual(1, receivedCount);
-        Assert.AreEqual(0, transport.Sent.Count);
-        Assert.IsTrue(logs.Any(log => log.Contains("pending outbound flush failed", StringComparison.Ordinal)
-            && log.Contains("bad character payload", StringComparison.Ordinal)));
-    }
-
-    [TestMethod]
-    public async Task SendJoinResponseReplaysCachedLobbyCharacterStateToJoiningClient()
+    public async Task SendJoinResponseDoesNotReplayCachedLobbyCharacterStateToJoiningClient()
     {
         var transport = new CapturingTransport();
         var logs = new List<string>();
@@ -225,20 +184,13 @@ public sealed class BrokerBackedNetServiceTests
 
         await service.SendMessageAsync(joinResponse, BrokerPlayerId.ForClientIndex(1), CancellationToken.None);
 
-        Assert.AreEqual(2, transport.Sent.Count);
-        Assert.AreEqual(typeof(ClientLobbyJoinResponseMessage).AssemblyQualifiedName, transport.Sent[0].MessageType);
-        var replay = transport.Sent[1];
-        Assert.AreEqual("local-test", replay.SessionId);
-        Assert.AreEqual("client-0", replay.SourceClientId);
-        Assert.AreEqual("client-1", replay.TargetClientId);
-        Assert.AreEqual(typeof(LobbyPlayerChangedCharacterMessage).AssemblyQualifiedName, replay.MessageType);
-        Assert.AreEqual(2, replay.Sequence);
-        Assert.IsTrue(logs.Any(log => log.Contains("Broker replay outbound", StringComparison.Ordinal)
-            && log.Contains(nameof(LobbyPlayerChangedCharacterMessage), StringComparison.Ordinal)));
+        Assert.AreEqual(1, transport.Sent.Count);
+        Assert.AreEqual(typeof(ClientLobbyJoinResponseMessage).AssemblyQualifiedName, transport.Sent.Single().MessageType);
+        Assert.IsFalse(logs.Any(log => log.Contains("Broker replay outbound", StringComparison.Ordinal)));
     }
 
     [TestMethod]
-    public async Task SendJoinResponseReplaysCachedLobbyCharacterStateWithoutTimer()
+    public async Task SendJoinResponseCompletesWithoutReplayTimer()
     {
         var transport = new CapturingTransport();
         var service = new BrokerBackedNetService(
@@ -258,13 +210,12 @@ public sealed class BrokerBackedNetServiceTests
         Assert.IsTrue(sendTask.IsCompleted);
         await sendTask.WaitAsync(TimeSpan.FromSeconds(1));
 
-        Assert.AreEqual(2, transport.Sent.Count);
+        Assert.AreEqual(1, transport.Sent.Count);
         Assert.AreEqual(typeof(ClientLobbyJoinResponseMessage).AssemblyQualifiedName, transport.Sent[0].MessageType);
-        Assert.AreEqual(typeof(LobbyPlayerChangedCharacterMessage).AssemblyQualifiedName, transport.Sent[1].MessageType);
     }
 
     [TestMethod]
-    public async Task SendJoinResponseDoesNotReplayJoiningClientsOwnCachedCharacterState()
+    public async Task SendJoinResponseDoesNotReplayAnyCachedCharacterState()
     {
         var transport = new CapturingTransport();
         var service = new BrokerBackedNetService(
@@ -382,6 +333,24 @@ public sealed class BrokerBackedNetServiceTests
         StringAssert.Contains(logs.Single(), "client-0");
         StringAssert.Contains(logs.Single(), "client-1");
         StringAssert.Contains(logs.Single(), nameof(FakeLobbyMessage));
+    }
+
+    [TestMethod]
+    public async Task DispatchEnvelopeLogsThinTransportForLobbyMessage()
+    {
+        var transport = new CapturingTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport, logs.Add);
+
+        await service.DispatchEnvelopeAsync(EnvelopeForMessage(
+            "client-0",
+            targetClientId: "client-1",
+            new LobbyPlayerSetReadyMessage { ready = true },
+            sequence: 1),
+            CancellationToken.None);
+
+        Assert.IsTrue(logs.Any(log => log.Contains("Broker thin transport inbound lobby message", StringComparison.Ordinal)
+            && log.Contains(nameof(LobbyPlayerSetReadyMessage), StringComparison.Ordinal)));
     }
 
     [TestMethod]
@@ -560,7 +529,7 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
-    public async Task DuplicateLobbyStateDispatchesOnce()
+    public async Task DuplicateLobbyStateDispatchesInFifoOrder()
     {
         var transport = new QueuedTransport();
         var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
@@ -570,7 +539,7 @@ public sealed class BrokerBackedNetServiceTests
             new LobbyPlayerSetReadyMessage(),
             sequence: 1);
         var receivedCount = 0;
-        service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>(_ => receivedCount++);
+        service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>((_, _) => receivedCount++);
         service.MarkLobbyReady();
 
         var loop = service.RunReceiveLoopAsync(CancellationToken.None);
@@ -581,7 +550,7 @@ public sealed class BrokerBackedNetServiceTests
         await transport.CompleteAsync();
         await loop.WaitAsync(TimeSpan.FromSeconds(1));
 
-        Assert.AreEqual(1, receivedCount);
+        Assert.AreEqual(2, receivedCount);
     }
 
     [TestMethod]
@@ -620,7 +589,7 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
-    public async Task JoinResponseWithoutRegisteredHandlerUnblocksClientLobbyState()
+    public async Task ClientCharacterStateIsNotSuppressedWithoutJoinResponseHandler()
     {
         var transport = new QueuedTransport();
         var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
@@ -643,7 +612,7 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
-    public async Task OutboundEchoDuringRemoteStateDispatchIsSuppressedWithoutTimer()
+    public async Task OutboundDuringRemoteStateDispatchIsAllowed()
     {
         var transport = new QueuedTransport();
         var logs = new List<string>();
@@ -663,9 +632,10 @@ public sealed class BrokerBackedNetServiceTests
         await transport.CompleteAsync();
         await loop.WaitAsync(TimeSpan.FromSeconds(1));
 
-        Assert.AreEqual(0, transport.Sent.Count);
-        Assert.IsTrue(logs.Any(log => log.Contains("suppressed outbound", StringComparison.Ordinal)
-            && log.Contains("applying remote state", StringComparison.Ordinal)));
+        var sent = transport.Sent.Single();
+        Assert.AreEqual(typeof(LobbyPlayerSetReadyMessage).AssemblyQualifiedName, sent.MessageType);
+        Assert.AreEqual("client-0", sent.TargetClientId);
+        Assert.IsFalse(logs.Any(log => log.Contains("applying remote state", StringComparison.Ordinal)));
     }
 
     [TestMethod]
@@ -818,18 +788,6 @@ public sealed class BrokerBackedNetServiceTests
             typeof(T).AssemblyQualifiedName ?? typeof(T).FullName ?? typeof(T).Name,
             [],
             sequence);
-    }
-
-    private static void SetPendingLocalCharacter(BrokerBackedNetService service, Runtime.BrokerEnvelope envelope)
-    {
-        SetPendingLocalCharacter(service, sequence => envelope with { Sequence = sequence });
-    }
-
-    private static void SetPendingLocalCharacter(BrokerBackedNetService service, Func<long, Runtime.BrokerEnvelope> pending)
-    {
-        typeof(BrokerBackedNetService)
-            .GetField("_pendingLocalCharacterBeforeJoinResponse", BindingFlags.Instance | BindingFlags.NonPublic)!
-            .SetValue(service, pending);
     }
 
     private static Runtime.BrokerEnvelope EnvelopeForMessage<T>(string sourceClientId, string? targetClientId, T message, long sequence)

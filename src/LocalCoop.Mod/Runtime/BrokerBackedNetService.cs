@@ -11,16 +11,10 @@ public sealed class BrokerBackedNetService
     private readonly IBrokerEnvelopeTransport _transport;
     private readonly Action<string>? _log;
     private readonly Dictionary<string, List<Delegate>> _handlersByMessageType = new(StringComparer.Ordinal);
-    private readonly Dictionary<string, BrokerEnvelope> _latestLobbyCharacterBySourceClientId = new(StringComparer.Ordinal);
-    private readonly object _latestLobbyCharacterGate = new();
-    private readonly object _pendingLocalCharacterGate = new();
     private readonly BrokerLobbyMessageCoordinator _messageCoordinator;
     private readonly Dictionary<ulong, bool> _knownPeersById = [];
     private readonly object _knownPeerGate = new();
     private long _sequence;
-    private int _isApplyingInboundRemoteLobbyState;
-    private bool _hasReceivedHostJoinResponse;
-    private Func<long, BrokerEnvelope>? _pendingLocalCharacterBeforeJoinResponse;
 
     public BrokerBackedNetService(
         string sessionId,
@@ -38,7 +32,6 @@ public sealed class BrokerBackedNetService
             : clientId;
         _clientIndex = clientIndex;
         _role = role ?? (clientIndex == 0 ? BrokerClientRole.Host : BrokerClientRole.Client);
-        _hasReceivedHostJoinResponse = clientIndex == 0;
         NetId = BrokerPlayerId.ForClientIndex(clientIndex);
         _transport = transport;
         _log = log;
@@ -137,7 +130,6 @@ public sealed class BrokerBackedNetService
         var targetClientId = targetPlayerId is null ? GetDefaultTargetClientId() : PlayerIdToClientId(targetPlayerId.Value);
         if (ShouldSuppressOutboundMessage(message, out var reason))
         {
-            CachePendingLocalCharacterBeforeJoinResponse(message, targetClientId, reason);
             _log?.Invoke($"Broker suppressed outbound: sessionId={_sessionId} source={_clientId} messageType={MessageTypeKey<T>()} reason={reason}{PayloadSuffix(message)}.");
             return;
         }
@@ -148,14 +140,10 @@ public sealed class BrokerBackedNetService
             targetClientId,
             message,
             Interlocked.Increment(ref _sequence));
-        RecordLatestLobbyCharacter(envelope);
         TrackKnownPeers(envelope);
         _log?.Invoke($"Broker outbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}{PayloadSuffix(message)}.");
+        LogThinTransportOutbound(envelope, message);
         await _transport.SendEnvelopeAsync(envelope, cancellationToken);
-        if (IsClientLobbyJoinResponse(envelope) && targetClientId is not null)
-        {
-            await ReplayLatestLobbyCharactersAsync(targetClientId, cancellationToken).ConfigureAwait(false);
-        }
     }
 
     public void SendMessage<T>(T message, ulong playerId)
@@ -258,31 +246,15 @@ public sealed class BrokerBackedNetService
     {
         var messageType = typeof(T);
         var isLobbyCharacterChange = IsLobbyPlayerChangedCharacter(messageType);
-        var isLobbyStateMessage = IsLobbyStateMessage(messageType);
         if (string.Equals(messageType.FullName, "MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync.PeerInputMessage", StringComparison.Ordinal))
         {
             reason = "peer input is not required for lobby-only broker sync";
             return true;
         }
 
-        if (isLobbyStateMessage
-            && System.Threading.Volatile.Read(ref _isApplyingInboundRemoteLobbyState) != 0)
-        {
-            reason = "applying remote state";
-            return true;
-        }
-
         if (isLobbyCharacterChange && IsNullCharacterChange(message))
         {
             reason = "null character change is an initialization artifact";
-            return true;
-        }
-
-        if (_clientIndex != 0
-            && !_hasReceivedHostJoinResponse
-            && isLobbyCharacterChange)
-        {
-            reason = "waiting for host join response";
             return true;
         }
 
@@ -306,52 +278,32 @@ public sealed class BrokerBackedNetService
     public async Task DispatchEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var isInboundRemoteLobbyState = IsLobbyStateMessage(envelope)
-            && !string.Equals(envelope.SourceClientId, _clientId, StringComparison.Ordinal);
-        RecordLatestLobbyCharacter(envelope);
         TrackKnownPeers(envelope);
 
         _log?.Invoke($"Broker inbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}{PayloadSuffix(envelope)}.");
-        if (IsClientLobbyJoinResponse(envelope))
-        {
-            _hasReceivedHostJoinResponse = true;
-            await FlushPendingLocalCharacterAfterJoinResponseAsync(cancellationToken).ConfigureAwait(false);
-        }
+        LogThinTransportInbound(envelope);
 
         if (!_handlersByMessageType.TryGetValue(envelope.MessageType, out var handlers))
         {
             return;
         }
 
-        if (isInboundRemoteLobbyState)
+        foreach (var handler in handlers.ToArray())
         {
-            System.Threading.Volatile.Write(ref _isApplyingInboundRemoteLobbyState, 1);
+            var parameters = handler.Method.GetParameters();
+            var parameterType = parameters[0].ParameterType;
+            var message = BrokerEnvelopeMessageSerializer.Deserialize(envelope, parameterType);
+            if (parameters.Length == 1)
+            {
+                InvokeHandler(handler, message);
+            }
+            else
+            {
+                InvokeHandler(handler, message, ClientIdToPlayerId(envelope.SourceClientId));
+            }
         }
 
-        try
-        {
-            foreach (var handler in handlers.ToArray())
-            {
-                var parameters = handler.Method.GetParameters();
-                var parameterType = parameters[0].ParameterType;
-                var message = BrokerEnvelopeMessageSerializer.Deserialize(envelope, parameterType);
-                if (parameters.Length == 1)
-                {
-                    InvokeHandler(handler, message);
-                }
-                else
-                {
-                    InvokeHandler(handler, message, ClientIdToPlayerId(envelope.SourceClientId));
-                }
-            }
-        }
-        finally
-        {
-            if (isInboundRemoteLobbyState)
-            {
-                System.Threading.Volatile.Write(ref _isApplyingInboundRemoteLobbyState, 0);
-            }
-        }
+        await Task.CompletedTask;
     }
 
     private static bool IsClientLobbyJoinResponse(BrokerEnvelope envelope)
@@ -366,68 +318,6 @@ public sealed class BrokerBackedNetService
         return MatchesMessageType(
             envelope.MessageType,
             "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.ClientLobbyJoinRequestMessage");
-    }
-
-    private void RecordLatestLobbyCharacter(BrokerEnvelope envelope)
-    {
-        if (!IsLobbyPlayerChangedCharacter(envelope))
-        {
-            return;
-        }
-
-        lock (_latestLobbyCharacterGate)
-        {
-            _latestLobbyCharacterBySourceClientId[envelope.SourceClientId] = envelope;
-        }
-    }
-
-    private void CachePendingLocalCharacterBeforeJoinResponse<T>(T message, string? targetClientId, string reason)
-    {
-        if (_role != BrokerClientRole.Client
-            || _hasReceivedHostJoinResponse
-            || !reason.Contains("waiting for host join response", StringComparison.Ordinal)
-            || !IsLobbyPlayerChangedCharacter(typeof(T)))
-        {
-            return;
-        }
-
-        lock (_pendingLocalCharacterGate)
-        {
-            _pendingLocalCharacterBeforeJoinResponse = sequence => BrokerEnvelopeMessageSerializer.ToEnvelope(
-                _sessionId,
-                _clientId,
-                targetClientId,
-                message,
-                sequence);
-        }
-    }
-
-    private async Task FlushPendingLocalCharacterAfterJoinResponseAsync(CancellationToken cancellationToken)
-    {
-        Func<long, BrokerEnvelope>? pending;
-        lock (_pendingLocalCharacterGate)
-        {
-            pending = _pendingLocalCharacterBeforeJoinResponse;
-            _pendingLocalCharacterBeforeJoinResponse = null;
-        }
-
-        if (pending is null)
-        {
-            return;
-        }
-
-        try
-        {
-            var envelope = pending(Interlocked.Increment(ref _sequence));
-            RecordLatestLobbyCharacter(envelope);
-            TrackKnownPeers(envelope);
-            _log?.Invoke($"Broker pending outbound flushed: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}{PayloadSuffix(envelope)}.");
-            await _transport.SendEnvelopeAsync(envelope, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception exception)
-        {
-            _log?.Invoke($"Broker pending outbound flush failed: sessionId={_sessionId} source={_clientId}: {exception.GetType().Name}: {exception.Message}");
-        }
     }
 
     private void TrackKnownPeers(BrokerEnvelope envelope)
@@ -504,41 +394,32 @@ public sealed class BrokerBackedNetService
             .ToArray();
     }
 
-    private async Task ReplayLatestLobbyCharactersAsync(string targetClientId, CancellationToken cancellationToken)
+    private void LogThinTransportOutbound<T>(BrokerEnvelope envelope, T message)
     {
-        var cachedCharacters = GetReplayableLobbyCharacters(targetClientId);
-        if (cachedCharacters.Length == 0)
+        if (!IsThinTransportLobbyDiagnosticMessage(envelope))
         {
             return;
         }
 
-        foreach (var cachedCharacter in cachedCharacters)
-        {
-            var replay = cachedCharacter with
-            {
-                TargetClientId = targetClientId,
-                Sequence = Interlocked.Increment(ref _sequence)
-            };
-            _log?.Invoke($"Broker replay outbound: sessionId={replay.SessionId} source={replay.SourceClientId} target={replay.TargetClientId ?? "broadcast"} messageType={replay.MessageType} sequence={replay.Sequence}{PayloadSuffix(replay)}.");
-            await _transport.SendEnvelopeAsync(replay, cancellationToken).ConfigureAwait(false);
-        }
+        _log?.Invoke($"Broker thin transport outbound lobby message: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}{PayloadSuffix(message)}.");
     }
 
-    private BrokerEnvelope[] GetReplayableLobbyCharacters(string targetClientId)
+    private void LogThinTransportInbound(BrokerEnvelope envelope)
     {
-        lock (_latestLobbyCharacterGate)
+        if (!IsThinTransportLobbyDiagnosticMessage(envelope))
         {
-            return _latestLobbyCharacterBySourceClientId.Values
-                .Where(cachedCharacter => !string.Equals(cachedCharacter.SourceClientId, targetClientId, StringComparison.Ordinal))
-                .ToArray();
+            return;
         }
+
+        _log?.Invoke($"Broker thin transport inbound lobby message: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}{PayloadSuffix(envelope)}.");
     }
 
-    private static bool IsLobbyPlayerChangedCharacter(BrokerEnvelope envelope)
+    private static bool IsThinTransportLobbyDiagnosticMessage(BrokerEnvelope envelope)
     {
-        return envelope.MessageType.StartsWith(
-            "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerChangedCharacterMessage,",
-            StringComparison.Ordinal);
+        return MatchesMessageType(envelope.MessageType, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerChangedCharacterMessage")
+            || MatchesMessageType(envelope.MessageType, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerSetReadyMessage")
+            || MatchesMessageType(envelope.MessageType, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.ClientLobbyJoinResponseMessage")
+            || MatchesMessageType(envelope.MessageType, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyBeginRunMessage");
     }
 
     private static bool IsLobbyPlayerChangedCharacter(Type messageType)
@@ -547,24 +428,6 @@ public sealed class BrokerBackedNetService
             messageType.FullName,
             "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerChangedCharacterMessage",
             StringComparison.Ordinal);
-    }
-
-    private static bool IsLobbyStateMessage(BrokerEnvelope envelope)
-    {
-        return IsLobbyStateMessageName(envelope.MessageType);
-    }
-
-    private static bool IsLobbyStateMessage(Type messageType)
-    {
-        return IsLobbyStateMessageName(messageType.FullName ?? messageType.Name);
-    }
-
-    private static bool IsLobbyStateMessageName(string messageType)
-    {
-        return MatchesMessageType(messageType, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerChangedCharacterMessage")
-            || MatchesMessageType(messageType, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerSetReadyMessage")
-            || MatchesMessageType(messageType, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.PlayerJoinedMessage")
-            || MatchesMessageType(messageType, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.PlayerLeftMessage");
     }
 
     private static bool MatchesMessageType(string messageType, string fullName)

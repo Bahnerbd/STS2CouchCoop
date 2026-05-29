@@ -27,11 +27,10 @@ public sealed class BrokerLobbyMessageCoordinatorTests
     }
 
     [TestMethod]
-    public void DuplicateStateEnvelopeIsIgnored()
+    public void DuplicateStateEnvelopeKeepsFifoOrder()
     {
-        var coordinator = new BrokerLobbyMessageCoordinator();
         var logs = new List<string>();
-        coordinator = new BrokerLobbyMessageCoordinator(logs.Add);
+        var coordinator = new BrokerLobbyMessageCoordinator(logs.Add);
         var envelope = Envelope<LobbyPlayerChangedCharacterMessage>("client-0", payload: [1], sequence: 1);
         coordinator.MarkLobbyReady();
 
@@ -39,13 +38,14 @@ public sealed class BrokerLobbyMessageCoordinatorTests
         coordinator.Enqueue(envelope with { Sequence = 2 });
         var dispatchable = coordinator.DrainDispatchable(Registered(envelope.MessageType));
 
-        Assert.AreEqual(1, dispatchable.Count);
+        Assert.AreEqual(2, dispatchable.Count);
         Assert.AreEqual(1, dispatchable[0].Sequence);
-        Assert.IsTrue(logs.Any(log => log.Contains("duplicate", StringComparison.Ordinal)));
+        Assert.AreEqual(2, dispatchable[1].Sequence);
+        Assert.IsFalse(logs.Any(log => log.Contains("duplicate", StringComparison.Ordinal)));
     }
 
     [TestMethod]
-    public void StateEnvelopeBurstCoalescesToLatestPayloadBeforeUpdate()
+    public void StateEnvelopeBurstKeepsFifoOrderBeforeUpdate()
     {
         var coordinator = new BrokerLobbyMessageCoordinator();
         var messageType = typeof(LobbyPlayerChangedCharacterMessage).AssemblyQualifiedName!;
@@ -56,9 +56,13 @@ public sealed class BrokerLobbyMessageCoordinatorTests
         coordinator.Enqueue(new Runtime.BrokerEnvelope("local-test", "client-0", null, messageType, [3], 3));
         var dispatchable = coordinator.DrainDispatchable(Registered(messageType));
 
-        Assert.AreEqual(1, dispatchable.Count);
-        Assert.AreEqual(3, dispatchable[0].Sequence);
-        CollectionAssert.AreEqual(new byte[] { 3 }, dispatchable[0].Payload);
+        Assert.AreEqual(3, dispatchable.Count);
+        Assert.AreEqual(1, dispatchable[0].Sequence);
+        Assert.AreEqual(2, dispatchable[1].Sequence);
+        Assert.AreEqual(3, dispatchable[2].Sequence);
+        CollectionAssert.AreEqual(new byte[] { 1 }, dispatchable[0].Payload);
+        CollectionAssert.AreEqual(new byte[] { 2 }, dispatchable[1].Payload);
+        CollectionAssert.AreEqual(new byte[] { 3 }, dispatchable[2].Payload);
     }
 
     [TestMethod]
