@@ -40,6 +40,16 @@ public static class BrokerLobbyServiceSubstitution
         return true;
     }
 
+    public static bool ShouldSubstituteForLifecycle(BrokerClientRole role, string methodName)
+    {
+        return role switch
+        {
+            BrokerClientRole.Host => string.Equals(methodName, "InitializeMultiplayerAsHost", StringComparison.Ordinal),
+            BrokerClientRole.Client => string.Equals(methodName, "InitializeMultiplayerAsClient", StringComparison.Ordinal),
+            _ => false
+        };
+    }
+
     private static NetGameType ToNetGameType(BrokerClientRole role)
     {
         return role == BrokerClientRole.Host ? NetGameType.Host : NetGameType.Client;

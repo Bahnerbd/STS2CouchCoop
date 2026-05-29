@@ -30,9 +30,35 @@ public static class BrokerClientJoinFlow
             sessionState = RunSessionState.InLobby,
             joinResponse = new ClientLobbyJoinResponseMessage
             {
-                playersInLobby = [],
+                playersInLobby = CreateInitialLobbyPlayers(localClientIndex),
                 modifiers = []
             }
+        };
+    }
+
+    private static List<LobbyPlayer> CreateInitialLobbyPlayers(int localClientIndex)
+    {
+        var players = new List<LobbyPlayer>
+        {
+            CreateLobbyPlayer(0)
+        };
+
+        if (localClientIndex != 0)
+        {
+            players.Add(CreateLobbyPlayer(localClientIndex));
+        }
+
+        return players;
+    }
+
+    private static LobbyPlayer CreateLobbyPlayer(int clientIndex)
+    {
+        return new LobbyPlayer
+        {
+            id = BrokerPlayerId.ForClientIndex(clientIndex),
+            slotId = clientIndex,
+            maxMultiplayerAscensionUnlocked = 0,
+            isReady = false
         };
     }
 

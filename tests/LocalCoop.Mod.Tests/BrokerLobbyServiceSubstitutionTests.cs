@@ -10,6 +10,23 @@ namespace LocalCoop.Mod.Tests;
 public sealed class BrokerLobbyServiceSubstitutionTests
 {
     [TestMethod]
+    public void ShouldSubstituteForLifecycleRequiresMatchingBrokerRole()
+    {
+        Assert.IsTrue(BrokerLobbyServiceSubstitution.ShouldSubstituteForLifecycle(
+            BrokerClientRole.Host,
+            "InitializeMultiplayerAsHost"));
+        Assert.IsTrue(BrokerLobbyServiceSubstitution.ShouldSubstituteForLifecycle(
+            BrokerClientRole.Client,
+            "InitializeMultiplayerAsClient"));
+        Assert.IsFalse(BrokerLobbyServiceSubstitution.ShouldSubstituteForLifecycle(
+            BrokerClientRole.Client,
+            "InitializeMultiplayerAsHost"));
+        Assert.IsFalse(BrokerLobbyServiceSubstitution.ShouldSubstituteForLifecycle(
+            BrokerClientRole.Host,
+            "InitializeMultiplayerAsClient"));
+    }
+
+    [TestMethod]
     public void TrySubstituteFirstArgumentReplacesServiceWhenBrokerModeIsEnabled()
     {
         var originalService = new object();

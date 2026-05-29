@@ -26,7 +26,7 @@ public static class BrokerLobbyServiceSubstitutionPatch
         }
     }
 
-    public static void Prefix(object[] __args)
+    public static void Prefix(MethodBase __originalMethod, object[] __args)
     {
         var settings = LoadSettings();
         if (!settings.Enabled)
@@ -37,6 +37,13 @@ public static class BrokerLobbyServiceSubstitutionPatch
         var log = new BrokerEventLog(settings.EventLogPath);
         try
         {
+            if (settings.Config is not null
+                && !BrokerLobbyServiceSubstitution.ShouldSubstituteForLifecycle(settings.Config.Role, __originalMethod.Name))
+            {
+                log.Write($"Broker lobby service substitution skipped: role={settings.Config.Role} is not valid for {__originalMethod.Name}.");
+                return;
+            }
+
             BrokerLobbyServiceSubstitution.TrySubstituteFirstArgument(
                 settings,
                 __args,

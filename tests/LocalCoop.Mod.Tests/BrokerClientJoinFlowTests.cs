@@ -23,7 +23,7 @@ public sealed class BrokerClientJoinFlowTests
     }
 
     [TestMethod]
-    public void CreateStandardLobbyJoinResultContainsNoSyntheticPlayers()
+    public void CreateStandardLobbyJoinResultContainsOnlyIdentityPlayersWithoutCharacters()
     {
         var result = BrokerClientJoinFlow.CreateStandardLobbyJoinResult();
 
@@ -33,13 +33,21 @@ public sealed class BrokerClientJoinFlowTests
 
         var response = result.joinResponse.Value;
         Assert.IsNotNull(response.playersInLobby);
-        Assert.AreEqual(0, response.playersInLobby.Count);
+        Assert.AreEqual(2, response.playersInLobby.Count);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), response.playersInLobby[0].id);
+        Assert.AreEqual(0, response.playersInLobby[0].slotId);
+        Assert.IsFalse(response.playersInLobby[0].isReady);
+        Assert.IsNull(response.playersInLobby[0].character);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), response.playersInLobby[1].id);
+        Assert.AreEqual(1, response.playersInLobby[1].slotId);
+        Assert.IsFalse(response.playersInLobby[1].isReady);
+        Assert.IsNull(response.playersInLobby[1].character);
         Assert.IsNotNull(response.modifiers);
         Assert.AreEqual(0, response.modifiers.Count);
     }
 
     [TestMethod]
-    public void CreateStandardLobbyJoinResultIgnoresConfiguredClientIndexForSyntheticState()
+    public void CreateStandardLobbyJoinResultUsesConfiguredClientIndexForIdentityOnly()
     {
         var factory = typeof(BrokerClientJoinFlow).GetMethod(nameof(BrokerClientJoinFlow.CreateStandardLobbyJoinResult), [typeof(int)]);
 
@@ -50,7 +58,13 @@ public sealed class BrokerClientJoinFlowTests
         var players = response.playersInLobby;
 
         Assert.IsNotNull(players);
-        Assert.AreEqual(0, players!.Count);
+        Assert.AreEqual(2, players!.Count);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), players[0].id);
+        Assert.AreEqual(0, players[0].slotId);
+        Assert.IsNull(players[0].character);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(2), players[1].id);
+        Assert.AreEqual(2, players[1].slotId);
+        Assert.IsNull(players[1].character);
     }
 
     [TestMethod]
