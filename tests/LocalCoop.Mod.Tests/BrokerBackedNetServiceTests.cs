@@ -2,6 +2,7 @@ using LocalCoop.Mod.Runtime;
 using LocalCoop.Protocol;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using LocalCoop.Broker;
+using MegaCrit.Sts2.Core.Multiplayer.Serialization;
 using System.Net;
 using System.Threading.Channels;
 using Runtime = LocalCoop.Mod.Runtime;
@@ -133,6 +134,25 @@ public sealed class BrokerBackedNetServiceTests
             CancellationToken.None);
 
         Assert.AreEqual("ready", received.kind);
+    }
+
+    [TestMethod]
+    public async Task DispatchEnvelopeUsesPacketSerializationForNetMessages()
+    {
+        var transport = new CapturingTransport();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
+        PacketSerializableMessage received = default;
+        service.RegisterMessageHandler<PacketSerializableMessage>(message => received = message);
+
+        await service.DispatchEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            new PacketSerializableMessage { value = "ready", unsupported = new IntPtr(42) },
+            sequence: 1),
+            CancellationToken.None);
+
+        Assert.AreEqual("ready", received.value);
     }
 
     [TestMethod]
@@ -272,6 +292,22 @@ public sealed class BrokerBackedNetServiceTests
     private struct FieldLobbyMessage
     {
         public string? kind;
+    }
+
+    private struct PacketSerializableMessage : IPacketSerializable
+    {
+        public string? value;
+        public IntPtr unsupported;
+
+        public void Serialize(PacketWriter writer)
+        {
+            writer.WriteString(value ?? string.Empty);
+        }
+
+        public void Deserialize(PacketReader reader)
+        {
+            value = reader.ReadString();
+        }
     }
 
     private sealed class CapturingTransport : IBrokerEnvelopeTransport
