@@ -175,6 +175,44 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task SendMessageSkipsCharacterChangeEchoDuringInboundLogging()
+    {
+        var transport = new CapturingTransport();
+        var logs = new List<string>();
+        var message = CreateUninitializedCharacterChange();
+        Exception? sendException = null;
+        BrokerBackedNetService? service = null;
+        service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-0",
+            clientIndex: 0,
+            transport,
+            log =>
+            {
+                logs.Add(log);
+                if (log.Contains("Broker inbound", StringComparison.Ordinal)
+                    && log.Contains(nameof(LobbyPlayerChangedCharacterMessage), StringComparison.Ordinal))
+                {
+                    try
+                    {
+                        service!.SendMessage(message);
+                    }
+                    catch (Exception exception)
+                    {
+                        sendException = exception;
+                    }
+                }
+            });
+
+        await service.DispatchEnvelopeAsync(EnvelopeFor<LobbyPlayerChangedCharacterMessage>("client-1", targetClientId: null, sequence: 1), CancellationToken.None);
+
+        Assert.IsNull(sendException, $"Expected character-change echo during inbound logging to be suppressed, but send threw {sendException?.GetType().Name}: {sendException?.Message}");
+        Assert.AreEqual(0, transport.Sent.Count);
+        Assert.IsTrue(logs.Any(log => log.Contains("suppressed outbound", StringComparison.Ordinal)
+            && log.Contains("recent remote character change", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
     public void TracksConnectionLoadingAndRawLobbyIdentifier()
     {
         var service = new BrokerBackedNetService(

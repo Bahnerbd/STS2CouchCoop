@@ -11,8 +11,8 @@ public sealed class BrokerBackedNetService
     private readonly Action<string>? _log;
     private readonly Dictionary<string, List<Delegate>> _handlersByMessageType = new(StringComparer.Ordinal);
     private long _sequence;
+    private long _lastInboundRemoteCharacterChangeUtcTicks;
     private bool _hasReceivedHostJoinResponse;
-    private DateTimeOffset? _lastInboundRemoteCharacterChangeAt;
 
     public BrokerBackedNetService(
         string sessionId,
@@ -189,8 +189,9 @@ public sealed class BrokerBackedNetService
         }
 
         if (isLobbyCharacterChange
-            && _lastInboundRemoteCharacterChangeAt is { } lastInboundRemoteCharacterChangeAt
-            && DateTimeOffset.UtcNow - lastInboundRemoteCharacterChangeAt <= RemoteCharacterEchoSuppressWindow)
+            && System.Threading.Volatile.Read(ref _lastInboundRemoteCharacterChangeUtcTicks) is var lastInboundRemoteCharacterChangeUtcTicks
+            && lastInboundRemoteCharacterChangeUtcTicks != 0
+            && DateTime.UtcNow.Ticks - lastInboundRemoteCharacterChangeUtcTicks <= RemoteCharacterEchoSuppressWindow.Ticks)
         {
             reason = "recent remote character change";
             return true;
@@ -216,16 +217,16 @@ public sealed class BrokerBackedNetService
     public Task DispatchEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
+        if (IsLobbyPlayerChangedCharacter(envelope)
+            && !string.Equals(envelope.SourceClientId, _clientId, StringComparison.Ordinal))
+        {
+            System.Threading.Volatile.Write(ref _lastInboundRemoteCharacterChangeUtcTicks, DateTime.UtcNow.Ticks);
+        }
+
         _log?.Invoke($"Broker inbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
         if (IsClientLobbyJoinResponse(envelope))
         {
             _hasReceivedHostJoinResponse = true;
-        }
-
-        if (IsLobbyPlayerChangedCharacter(envelope)
-            && !string.Equals(envelope.SourceClientId, _clientId, StringComparison.Ordinal))
-        {
-            _lastInboundRemoteCharacterChangeAt = DateTimeOffset.UtcNow;
         }
 
         if (!_handlersByMessageType.TryGetValue(envelope.MessageType, out var handlers))
