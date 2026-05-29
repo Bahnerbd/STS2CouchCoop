@@ -27,6 +27,19 @@ public static class BrokerLobbyServiceSubstitution
         return true;
     }
 
+    public static bool MarkBrokerLobbyReady(object?[] args, Action<string> log)
+    {
+        var service = args.OfType<BrokerNetGameService>().FirstOrDefault();
+        if (service is null)
+        {
+            return false;
+        }
+
+        service.MarkLobbyReady();
+        log($"Broker lobby service ready: netId={service.NetId}.");
+        return true;
+    }
+
     private static NetGameType ToNetGameType(BrokerClientRole role)
     {
         return role == BrokerClientRole.Host ? NetGameType.Host : NetGameType.Client;

@@ -17,12 +17,14 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
     private Action<NetErrorInfo>? _disconnected;
     private Action<ulong>? _clientConnected;
     private Action<ulong, NetErrorInfo>? _clientDisconnected;
+    private HashSet<ulong> _lastConnectedPeerIds;
     private int _disposed;
 
     public BrokerNetGameService(BrokerBackedNetService inner, NetGameType type)
     {
         _inner = inner;
         _type = type;
+        _lastConnectedPeerIds = inner.ConnectedPeerIds.ToHashSet();
         _receiveLoop = _inner.RunReceiveLoopAsync(_receiveLoopCancellation.Token);
     }
 
@@ -36,7 +38,10 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
 
     public PlatformType Platform => PlatformType.None;
 
-    public IReadOnlyList<NetClientData> ConnectedPeers { get; } = [];
+    public IReadOnlyList<NetClientData> ConnectedPeers =>
+        _inner.ConnectedPeerIds
+            .Select(peerId => new NetClientData { peerId = peerId })
+            .ToArray();
 
     public NetHost NetHost => null!;
 
@@ -91,7 +96,25 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
 
     public void Update()
     {
+        var before = _lastConnectedPeerIds;
         _inner.Update();
+        var after = _inner.ConnectedPeerIds.ToHashSet();
+        foreach (var peerId in after.Except(before))
+        {
+            _clientConnected?.Invoke(peerId);
+        }
+
+        foreach (var peerId in before.Except(after))
+        {
+            _clientDisconnected?.Invoke(peerId, default);
+        }
+
+        _lastConnectedPeerIds = after;
+    }
+
+    public void MarkLobbyReady()
+    {
+        _inner.MarkLobbyReady();
     }
 
     public void Disconnect(NetError reason, bool now)

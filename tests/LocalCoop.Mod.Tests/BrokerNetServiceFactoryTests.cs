@@ -1,5 +1,6 @@
 using LocalCoop.Mod.Runtime;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
+using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Threading.Channels;
 
@@ -86,10 +87,89 @@ public sealed class BrokerNetServiceFactoryTests
             new FakeLobbyMessage("ready"),
             sequence: 1));
 
+        await Task.Delay(50);
+        service.Update();
         var received = await receivedSource.Task.WaitAsync(TimeSpan.FromSeconds(1));
         service.Disconnect(default, now: true);
 
         Assert.AreEqual("ready", received.Kind);
+    }
+
+    [TestMethod]
+    public async Task BrokerNetGameServiceMarkLobbyReadyFlushesQueuedLobbyState()
+    {
+        var transport = new QueuedTransport();
+        var inner = new BrokerBackedNetService(
+            "local-test",
+            "client-1",
+            1,
+            transport);
+        var receivedCount = 0;
+        inner.RegisterMessageHandler<LobbyPlayerSetReadyMessage>(_ => receivedCount++);
+        using var service = new BrokerNetGameService(inner, NetGameType.Client);
+
+        await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            new LobbyPlayerSetReadyMessage(),
+            sequence: 1));
+
+        await Task.Delay(50);
+        service.Update();
+        Assert.AreEqual(0, receivedCount);
+
+        service.MarkLobbyReady();
+        service.Update();
+        service.Disconnect(default, now: true);
+
+        Assert.AreEqual(1, receivedCount);
+    }
+
+    [TestMethod]
+    public void BrokerNetGameServiceConnectedPeersIncludesHostForClient()
+    {
+        var inner = new BrokerBackedNetService(
+            "local-test",
+            "client-1",
+            1,
+            new CapturingTransport());
+        using var service = new BrokerNetGameService(inner, NetGameType.Client);
+
+        var peer = service.ConnectedPeers.Single();
+
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), peer.peerId);
+    }
+
+    [TestMethod]
+    public async Task BrokerNetGameServiceUpdateFiresClientConnectedFromJoinRequest()
+    {
+        var transport = new QueuedTransport();
+        var logs = new List<string>();
+        var inner = new BrokerBackedNetService(
+            "local-test",
+            "client-0",
+            0,
+            transport,
+            logs.Add);
+        inner.RegisterMessageHandler<ClientLobbyJoinRequestMessage>(_ => { });
+        using var service = new BrokerNetGameService(inner, NetGameType.Host);
+        ulong? connectedPeer = null;
+        service.ClientConnected += peerId => connectedPeer = peerId;
+        service.MarkLobbyReady();
+
+        await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-1",
+            targetClientId: "client-0",
+            BrokerClientJoinFlow.CreateJoinRequest(0, new MegaCrit.Sts2.Core.Unlocks.SerializableUnlockState()),
+            sequence: 1));
+        await Task.Delay(50);
+        service.Update();
+        service.Disconnect(default, now: true);
+
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), connectedPeer, string.Join(Environment.NewLine, logs));
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), service.ConnectedPeers.Single().peerId);
     }
 
     private sealed class CapturingTransport : IBrokerEnvelopeTransport

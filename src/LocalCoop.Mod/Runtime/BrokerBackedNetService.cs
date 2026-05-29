@@ -1,20 +1,23 @@
+using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
+
 namespace LocalCoop.Mod.Runtime;
 
 public sealed class BrokerBackedNetService
 {
-    private static readonly TimeSpan RemoteCharacterEchoSuppressWindow = TimeSpan.FromMilliseconds(150);
-    private static readonly TimeSpan CachedLobbyCharacterReplayDelay = TimeSpan.FromMilliseconds(150);
-
     private readonly string _sessionId;
     private readonly string _clientId;
     private readonly int _clientIndex;
+    private readonly BrokerClientRole _role;
     private readonly IBrokerEnvelopeTransport _transport;
     private readonly Action<string>? _log;
     private readonly Dictionary<string, List<Delegate>> _handlersByMessageType = new(StringComparer.Ordinal);
     private readonly Dictionary<string, BrokerEnvelope> _latestLobbyCharacterBySourceClientId = new(StringComparer.Ordinal);
     private readonly object _latestLobbyCharacterGate = new();
+    private readonly BrokerLobbyMessageCoordinator _messageCoordinator;
+    private readonly HashSet<ulong> _knownPeerIds = [];
+    private readonly object _knownPeerGate = new();
     private long _sequence;
-    private long _lastInboundRemoteCharacterChangeUtcTicks;
+    private int _isApplyingInboundRemoteLobbyState;
     private bool _hasReceivedHostJoinResponse;
 
     public BrokerBackedNetService(
@@ -22,7 +25,8 @@ public sealed class BrokerBackedNetService
         string clientId,
         int clientIndex,
         IBrokerEnvelopeTransport transport,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        BrokerClientRole? role = null)
     {
         _sessionId = string.IsNullOrWhiteSpace(sessionId)
             ? throw new ArgumentException("Session id must not be blank.", nameof(sessionId))
@@ -31,10 +35,16 @@ public sealed class BrokerBackedNetService
             ? throw new ArgumentException("Client id must not be blank.", nameof(clientId))
             : clientId;
         _clientIndex = clientIndex;
+        _role = role ?? (clientIndex == 0 ? BrokerClientRole.Host : BrokerClientRole.Client);
         _hasReceivedHostJoinResponse = clientIndex == 0;
         NetId = BrokerPlayerId.ForClientIndex(clientIndex);
         _transport = transport;
         _log = log;
+        _messageCoordinator = new BrokerLobbyMessageCoordinator(log);
+        if (_role == BrokerClientRole.Client)
+        {
+            _knownPeerIds.Add(BrokerPlayerId.ForClientIndex(0));
+        }
     }
 
     public ulong NetId { get; }
@@ -42,6 +52,17 @@ public sealed class BrokerBackedNetService
     public bool IsConnected { get; private set; } = true;
 
     public bool IsGameLoading { get; private set; }
+
+    public IReadOnlyList<ulong> ConnectedPeerIds
+    {
+        get
+        {
+            lock (_knownPeerGate)
+            {
+                return _knownPeerIds.Order().ToArray();
+            }
+        }
+    }
 
     public void RegisterMessageHandler<T>(Action<T> handler)
     {
@@ -101,7 +122,7 @@ public sealed class BrokerBackedNetService
             return;
         }
 
-        var targetClientId = targetPlayerId is null ? null : PlayerIdToClientId(targetPlayerId.Value);
+        var targetClientId = targetPlayerId is null ? GetDefaultTargetClientId() : PlayerIdToClientId(targetPlayerId.Value);
         var envelope = BrokerEnvelopeMessageSerializer.ToEnvelope(
             _sessionId,
             _clientId,
@@ -109,6 +130,7 @@ public sealed class BrokerBackedNetService
             message,
             Interlocked.Increment(ref _sequence));
         RecordLatestLobbyCharacter(envelope);
+        TrackKnownPeers(envelope);
         _log?.Invoke($"Broker outbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
         await _transport.SendEnvelopeAsync(envelope, cancellationToken);
         if (IsClientLobbyJoinResponse(envelope) && targetClientId is not null)
@@ -141,7 +163,7 @@ public sealed class BrokerBackedNetService
 
                 try
                 {
-                    await DispatchEnvelopeAsync(envelope, cancellationToken).ConfigureAwait(false);
+                    EnqueueInboundEnvelope(envelope);
                 }
                 catch (Exception exception)
                 {
@@ -160,11 +182,29 @@ public sealed class BrokerBackedNetService
 
     public void Update()
     {
+        foreach (var envelope in DrainInboundEnvelopes())
+        {
+            try
+            {
+                _log?.Invoke($"Broker inbound flushed: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
+                DispatchEnvelopeAsync(envelope, CancellationToken.None).GetAwaiter().GetResult();
+                _log?.Invoke($"Broker inbound dispatched: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
+            }
+            catch (Exception exception)
+            {
+                _log?.Invoke($"Broker inbound dispatch failed: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}: {exception.GetType().Name}: {exception.Message}");
+            }
+        }
     }
 
     public void SetGameLoading(bool isGameLoading)
     {
         IsGameLoading = isGameLoading;
+    }
+
+    public void MarkLobbyReady()
+    {
+        _messageCoordinator.MarkLobbyReady();
     }
 
     public string GetRawLobbyIdentifier()
@@ -176,9 +216,17 @@ public sealed class BrokerBackedNetService
     {
         var messageType = typeof(T);
         var isLobbyCharacterChange = IsLobbyPlayerChangedCharacter(messageType);
+        var isLobbyStateMessage = IsLobbyStateMessage(messageType);
         if (string.Equals(messageType.FullName, "MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync.PeerInputMessage", StringComparison.Ordinal))
         {
             reason = "peer input is not required for lobby-only broker sync";
+            return true;
+        }
+
+        if (isLobbyStateMessage
+            && System.Threading.Volatile.Read(ref _isApplyingInboundRemoteLobbyState) != 0)
+        {
+            reason = "applying remote state";
             return true;
         }
 
@@ -193,15 +241,6 @@ public sealed class BrokerBackedNetService
             && isLobbyCharacterChange)
         {
             reason = "waiting for host join response";
-            return true;
-        }
-
-        if (isLobbyCharacterChange
-            && System.Threading.Volatile.Read(ref _lastInboundRemoteCharacterChangeUtcTicks) is var lastInboundRemoteCharacterChangeUtcTicks
-            && lastInboundRemoteCharacterChangeUtcTicks != 0
-            && DateTime.UtcNow.Ticks - lastInboundRemoteCharacterChangeUtcTicks <= RemoteCharacterEchoSuppressWindow.Ticks)
-        {
-            reason = "recent remote character change";
             return true;
         }
 
@@ -225,12 +264,10 @@ public sealed class BrokerBackedNetService
     public Task DispatchEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        if (IsLobbyPlayerChangedCharacter(envelope)
-            && !string.Equals(envelope.SourceClientId, _clientId, StringComparison.Ordinal))
-        {
-            System.Threading.Volatile.Write(ref _lastInboundRemoteCharacterChangeUtcTicks, DateTime.UtcNow.Ticks);
-        }
+        var isInboundRemoteLobbyState = IsLobbyStateMessage(envelope)
+            && !string.Equals(envelope.SourceClientId, _clientId, StringComparison.Ordinal);
         RecordLatestLobbyCharacter(envelope);
+        TrackKnownPeers(envelope);
 
         _log?.Invoke($"Broker inbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
         if (IsClientLobbyJoinResponse(envelope))
@@ -243,18 +280,33 @@ public sealed class BrokerBackedNetService
             return Task.CompletedTask;
         }
 
-        foreach (var handler in handlers.ToArray())
+        if (isInboundRemoteLobbyState)
         {
-            var parameters = handler.Method.GetParameters();
-            var parameterType = parameters[0].ParameterType;
-            var message = BrokerEnvelopeMessageSerializer.Deserialize(envelope, parameterType);
-            if (parameters.Length == 1)
+            System.Threading.Volatile.Write(ref _isApplyingInboundRemoteLobbyState, 1);
+        }
+
+        try
+        {
+            foreach (var handler in handlers.ToArray())
             {
-                InvokeHandler(handler, message);
+                var parameters = handler.Method.GetParameters();
+                var parameterType = parameters[0].ParameterType;
+                var message = BrokerEnvelopeMessageSerializer.Deserialize(envelope, parameterType);
+                if (parameters.Length == 1)
+                {
+                    InvokeHandler(handler, message);
+                }
+                else
+                {
+                    InvokeHandler(handler, message, ClientIdToPlayerId(envelope.SourceClientId));
+                }
             }
-            else
+        }
+        finally
+        {
+            if (isInboundRemoteLobbyState)
             {
-                InvokeHandler(handler, message, ClientIdToPlayerId(envelope.SourceClientId));
+                System.Threading.Volatile.Write(ref _isApplyingInboundRemoteLobbyState, 0);
             }
         }
 
@@ -266,6 +318,13 @@ public sealed class BrokerBackedNetService
         return envelope.MessageType.StartsWith(
             "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.ClientLobbyJoinResponseMessage,",
             StringComparison.Ordinal);
+    }
+
+    private static bool IsClientLobbyJoinRequest(BrokerEnvelope envelope)
+    {
+        return MatchesMessageType(
+            envelope.MessageType,
+            "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.ClientLobbyJoinRequestMessage");
     }
 
     private void RecordLatestLobbyCharacter(BrokerEnvelope envelope)
@@ -281,6 +340,70 @@ public sealed class BrokerBackedNetService
         }
     }
 
+    private void TrackKnownPeers(BrokerEnvelope envelope)
+    {
+        if (IsClientLobbyJoinRequest(envelope))
+        {
+            AddKnownPeer(ClientIdToPlayerId(envelope.SourceClientId));
+            return;
+        }
+
+        if (!IsClientLobbyJoinResponse(envelope))
+        {
+            return;
+        }
+
+        AddKnownPeer(ClientIdToPlayerId(envelope.SourceClientId));
+        try
+        {
+            var response = (ClientLobbyJoinResponseMessage)BrokerEnvelopeMessageSerializer.Deserialize(
+                envelope,
+                typeof(ClientLobbyJoinResponseMessage));
+            if (response.playersInLobby is null)
+            {
+                return;
+            }
+
+            foreach (var player in response.playersInLobby)
+            {
+                AddKnownPeer(player.id);
+            }
+        }
+        catch (Exception exception)
+        {
+            _log?.Invoke($"Broker peer tracking failed: messageType={envelope.MessageType} sequence={envelope.Sequence}: {exception.GetType().Name}: {exception.Message}");
+        }
+    }
+
+    private void AddKnownPeer(ulong peerId)
+    {
+        if (peerId == 0 || peerId == NetId)
+        {
+            return;
+        }
+
+        lock (_knownPeerGate)
+        {
+            if (_knownPeerIds.Add(peerId))
+            {
+                _log?.Invoke($"Broker peer tracked: sessionId={_sessionId} peerId={peerId}.");
+            }
+        }
+    }
+
+    private void EnqueueInboundEnvelope(BrokerEnvelope envelope)
+    {
+        _messageCoordinator.Enqueue(envelope);
+        _log?.Invoke($"Broker inbound queued: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
+    }
+
+    private BrokerEnvelope[] DrainInboundEnvelopes()
+    {
+        return _messageCoordinator
+            .DrainDispatchable(_handlersByMessageType.Keys.ToHashSet(StringComparer.Ordinal))
+            .ToArray();
+    }
+
     private async Task ReplayLatestLobbyCharactersAsync(string targetClientId, CancellationToken cancellationToken)
     {
         var cachedCharacters = GetReplayableLobbyCharacters(targetClientId);
@@ -288,10 +411,6 @@ public sealed class BrokerBackedNetService
         {
             return;
         }
-
-        _log?.Invoke($"Broker replay scheduled: sessionId={_sessionId} target={targetClientId} delayMs={CachedLobbyCharacterReplayDelay.TotalMilliseconds:0} count={cachedCharacters.Length}.");
-        await Task.Delay(CachedLobbyCharacterReplayDelay, cancellationToken).ConfigureAwait(false);
-        cachedCharacters = GetReplayableLobbyCharacters(targetClientId);
 
         foreach (var cachedCharacter in cachedCharacters)
         {
@@ -330,6 +449,30 @@ public sealed class BrokerBackedNetService
             StringComparison.Ordinal);
     }
 
+    private static bool IsLobbyStateMessage(BrokerEnvelope envelope)
+    {
+        return IsLobbyStateMessageName(envelope.MessageType);
+    }
+
+    private static bool IsLobbyStateMessage(Type messageType)
+    {
+        return IsLobbyStateMessageName(messageType.FullName ?? messageType.Name);
+    }
+
+    private static bool IsLobbyStateMessageName(string messageType)
+    {
+        return MatchesMessageType(messageType, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerChangedCharacterMessage")
+            || MatchesMessageType(messageType, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerSetReadyMessage")
+            || MatchesMessageType(messageType, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.PlayerJoinedMessage")
+            || MatchesMessageType(messageType, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.PlayerLeftMessage");
+    }
+
+    private static bool MatchesMessageType(string messageType, string fullName)
+    {
+        return string.Equals(messageType, fullName, StringComparison.Ordinal)
+            || messageType.StartsWith(fullName + ",", StringComparison.Ordinal);
+    }
+
     private void InvokeHandler(Delegate handler, params object?[] args)
     {
         try
@@ -366,5 +509,10 @@ public sealed class BrokerBackedNetService
             && int.TryParse(clientId[prefix.Length..], out var clientIndex)
             ? BrokerPlayerId.ForClientIndex(clientIndex)
             : 0;
+    }
+
+    private string? GetDefaultTargetClientId()
+    {
+        return _role == BrokerClientRole.Client ? "client-0" : null;
     }
 }

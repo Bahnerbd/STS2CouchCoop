@@ -17,6 +17,7 @@ public static class BrokerNetServiceFactory
             settings.ClientId,
             settings.Config.ClientIndex,
             transport,
-            log);
+            log,
+            settings.Config.Role);
     }
 }
