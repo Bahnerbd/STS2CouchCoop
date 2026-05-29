@@ -85,6 +85,12 @@ public sealed class BrokerBackedNetService
 
     public async Task SendMessageAsync<T>(T message, ulong? targetPlayerId, CancellationToken cancellationToken)
     {
+        if (ShouldSuppressOutboundMessage(message, out var reason))
+        {
+            _log?.Invoke($"Broker suppressed outbound: sessionId={_sessionId} source={_clientId} messageType={MessageTypeKey<T>()} reason={reason}.");
+            return;
+        }
+
         var targetClientId = targetPlayerId is null ? null : PlayerIdToClientId(targetPlayerId.Value);
         var envelope = BrokerEnvelopeMessageSerializer.ToEnvelope(
             _sessionId,
@@ -149,6 +155,39 @@ public sealed class BrokerBackedNetService
     public string GetRawLobbyIdentifier()
     {
         return _sessionId;
+    }
+
+    private static bool ShouldSuppressOutboundMessage<T>(T message, out string reason)
+    {
+        var messageType = typeof(T);
+        if (string.Equals(messageType.FullName, "MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync.PeerInputMessage", StringComparison.Ordinal))
+        {
+            reason = "peer input is not required for lobby-only broker sync";
+            return true;
+        }
+
+        if (string.Equals(messageType.FullName, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerChangedCharacterMessage", StringComparison.Ordinal)
+            && IsNullCharacterChange(message))
+        {
+            reason = "null character change is an initialization artifact";
+            return true;
+        }
+
+        reason = string.Empty;
+        return false;
+    }
+
+    private static bool IsNullCharacterChange<T>(T message)
+    {
+        if (message is null)
+        {
+            return true;
+        }
+
+        var characterField = typeof(T).GetField(
+            "character",
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        return characterField is not null && characterField.GetValue(message) is null;
     }
 
     public Task DispatchEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)

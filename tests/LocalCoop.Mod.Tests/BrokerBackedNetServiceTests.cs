@@ -2,6 +2,8 @@ using LocalCoop.Mod.Runtime;
 using LocalCoop.Protocol;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using LocalCoop.Broker;
+using MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync;
+using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
 using System.Net;
 using System.Threading.Channels;
@@ -76,6 +78,44 @@ public sealed class BrokerBackedNetServiceTests
         Assert.AreEqual("client-0", envelope.SourceClientId);
         Assert.IsNull(envelope.TargetClientId);
         Assert.AreEqual(typeof(FakeLobbyMessage).AssemblyQualifiedName, envelope.MessageType);
+    }
+
+    [TestMethod]
+    public void SendMessageSkipsPeerInputMessagesForLobbyOnlyBrokerMode()
+    {
+        var transport = new CapturingTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-1",
+            clientIndex: 1,
+            transport,
+            logs.Add);
+
+        service.SendMessage(new PeerInputMessage());
+
+        Assert.AreEqual(0, transport.Sent.Count);
+        Assert.IsTrue(logs.Any(log => log.Contains("suppressed outbound", StringComparison.Ordinal)
+            && log.Contains(nameof(PeerInputMessage), StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void SendMessageSkipsNullLobbyCharacterChanges()
+    {
+        var transport = new CapturingTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-1",
+            clientIndex: 1,
+            transport,
+            logs.Add);
+
+        service.SendMessage(new LobbyPlayerChangedCharacterMessage());
+
+        Assert.AreEqual(0, transport.Sent.Count);
+        Assert.IsTrue(logs.Any(log => log.Contains("suppressed outbound", StringComparison.Ordinal)
+            && log.Contains(nameof(LobbyPlayerChangedCharacterMessage), StringComparison.Ordinal)));
     }
 
     [TestMethod]
