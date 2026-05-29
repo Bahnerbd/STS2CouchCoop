@@ -25,8 +25,10 @@ public static class BrokerClientJoinFlowPatch
             return true;
         }
 
-        new BrokerEventLog(settings.EventLogPath).Write("Broker client join flow: returning synthetic standard lobby join result.");
-        __result = Task.FromResult(BrokerClientJoinFlow.CreateStandardLobbyJoinResult());
+        var localClientIndex = settings.Config?.ClientIndex ?? 1;
+        new BrokerEventLog(settings.EventLogPath).Write(
+            $"Broker client join flow: returning synthetic standard lobby join result for local client index {localClientIndex}.");
+        __result = Task.FromResult(BrokerClientJoinFlow.CreateStandardLobbyJoinResult(localClientIndex));
         return false;
     }
 
