@@ -248,6 +248,38 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task ReceiveLoopLogsHandlerExceptionsAndContinues()
+    {
+        var transport = new QueuedTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport, logs.Add);
+        var receivedSource = new TaskCompletionSource<FakeLobbyMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        service.RegisterMessageHandler<FakeLobbyMessage>(_ => throw new InvalidOperationException("handler boom"));
+        service.RegisterMessageHandler<FakeLobbyMessage>(message => receivedSource.SetResult(message));
+
+        var loop = service.RunReceiveLoopAsync(CancellationToken.None);
+        await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            new FakeLobbyMessage("first"),
+            sequence: 1));
+        await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            new FakeLobbyMessage("second"),
+            sequence: 2));
+
+        var received = await receivedSource.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await transport.CompleteAsync();
+        await loop.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.AreEqual("first", received.Kind);
+        Assert.IsTrue(logs.Any(log => log.Contains("handler boom", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
     public async Task ReceiveLoopStopsWhenCanceled()
     {
         var transport = new QueuedTransport();

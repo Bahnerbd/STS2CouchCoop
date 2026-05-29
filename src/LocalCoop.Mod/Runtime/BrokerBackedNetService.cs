@@ -118,7 +118,14 @@ public sealed class BrokerBackedNetService
                     break;
                 }
 
-                await DispatchEnvelopeAsync(envelope, cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await DispatchEnvelopeAsync(envelope, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception exception)
+                {
+                    _log?.Invoke($"Broker inbound dispatch failed: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}: {exception.GetType().Name}: {exception.Message}");
+                }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -160,15 +167,28 @@ public sealed class BrokerBackedNetService
             var message = BrokerEnvelopeMessageSerializer.Deserialize(envelope, parameterType);
             if (parameters.Length == 1)
             {
-                handler.DynamicInvoke(message);
+                InvokeHandler(handler, message);
             }
             else
             {
-                handler.DynamicInvoke(message, ClientIdToPlayerId(envelope.SourceClientId));
+                InvokeHandler(handler, message, ClientIdToPlayerId(envelope.SourceClientId));
             }
         }
 
         return Task.CompletedTask;
+    }
+
+    private void InvokeHandler(Delegate handler, params object?[] args)
+    {
+        try
+        {
+            handler.DynamicInvoke(args);
+        }
+        catch (Exception exception)
+        {
+            var actualException = exception.InnerException ?? exception;
+            _log?.Invoke($"Broker inbound handler failed: handler={handler.Method.DeclaringType?.FullName}.{handler.Method.Name}: {actualException.GetType().Name}: {actualException.Message}");
+        }
     }
 
     private static string MessageTypeKey<T>()
