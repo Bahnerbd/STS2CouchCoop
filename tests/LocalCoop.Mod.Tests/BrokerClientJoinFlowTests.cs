@@ -94,6 +94,19 @@ public sealed class BrokerClientJoinFlowTests
         StringAssert.Contains(messages.Single(), "hiding join screen");
     }
 
+    [TestMethod]
+    public void TryHideJoinScreenPopsScreenFromSubmenuStackWhenItIsOnTop()
+    {
+        var screen = new FakeJoinScreenWithStack();
+        var messages = new List<string>();
+
+        BrokerClientJoinFlow.TryHideJoinScreen(screen, messages.Add);
+
+        Assert.AreEqual(1, screen.Stack.PopCount);
+        Assert.IsFalse(screen.VisibleState);
+        Assert.IsTrue(messages.Any(message => message.Contains("popped join screen", StringComparison.Ordinal)));
+    }
+
     private static BrokerModeSettings Settings(BrokerClientRole role)
     {
         return new BrokerModeSettings(
@@ -111,6 +124,40 @@ public sealed class BrokerClientJoinFlowTests
         public void set_Visible(bool visible)
         {
             VisibleState = visible;
+        }
+    }
+
+    private sealed class FakeJoinScreenWithStack
+    {
+        private readonly FakeSubmenuStack _stack;
+
+        public FakeJoinScreenWithStack()
+        {
+            _stack = new FakeSubmenuStack(this);
+        }
+
+        public FakeSubmenuStack Stack => _stack;
+
+        public bool VisibleState { get; private set; } = true;
+
+        public void set_Visible(bool visible)
+        {
+            VisibleState = visible;
+        }
+    }
+
+    private sealed class FakeSubmenuStack(object top)
+    {
+        public int PopCount { get; private set; }
+
+        public object Peek()
+        {
+            return top;
+        }
+
+        public void Pop()
+        {
+            PopCount++;
         }
     }
 }

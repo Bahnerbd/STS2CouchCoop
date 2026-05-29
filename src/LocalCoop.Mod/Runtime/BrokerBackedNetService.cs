@@ -14,7 +14,7 @@ public sealed class BrokerBackedNetService
     private readonly Dictionary<string, BrokerEnvelope> _latestLobbyCharacterBySourceClientId = new(StringComparer.Ordinal);
     private readonly object _latestLobbyCharacterGate = new();
     private readonly BrokerLobbyMessageCoordinator _messageCoordinator;
-    private readonly HashSet<ulong> _knownPeerIds = [];
+    private readonly Dictionary<ulong, bool> _knownPeersById = [];
     private readonly object _knownPeerGate = new();
     private long _sequence;
     private int _isApplyingInboundRemoteLobbyState;
@@ -43,9 +43,11 @@ public sealed class BrokerBackedNetService
         _messageCoordinator = new BrokerLobbyMessageCoordinator(log);
         if (_role == BrokerClientRole.Client)
         {
-            _knownPeerIds.Add(BrokerPlayerId.ForClientIndex(0));
+            _knownPeersById.Add(BrokerPlayerId.ForClientIndex(0), false);
         }
     }
+
+    public event Action<ulong>? PeerTracked;
 
     public ulong NetId { get; }
 
@@ -59,7 +61,21 @@ public sealed class BrokerBackedNetService
         {
             lock (_knownPeerGate)
             {
-                return _knownPeerIds.Order().ToArray();
+                return _knownPeersById.Keys.Order().ToArray();
+            }
+        }
+    }
+
+    public IReadOnlyList<BrokerConnectedPeer> ConnectedPeers
+    {
+        get
+        {
+            lock (_knownPeerGate)
+            {
+                return _knownPeersById
+                    .OrderBy(peer => peer.Key)
+                    .Select(peer => new BrokerConnectedPeer(peer.Key, peer.Value))
+                    .ToArray();
             }
         }
     }
@@ -200,6 +216,29 @@ public sealed class BrokerBackedNetService
     public void SetGameLoading(bool isGameLoading)
     {
         IsGameLoading = isGameLoading;
+    }
+
+    public void SetPeerReadyForBroadcasting(ulong peerId)
+    {
+        if (peerId == 0 || peerId == NetId)
+        {
+            return;
+        }
+
+        var added = false;
+        lock (_knownPeerGate)
+        {
+            added = !_knownPeersById.ContainsKey(peerId);
+            _knownPeersById[peerId] = true;
+        }
+
+        if (added)
+        {
+            _log?.Invoke($"Broker peer tracked: sessionId={_sessionId} peerId={peerId}.");
+            PeerTracked?.Invoke(peerId);
+        }
+
+        _log?.Invoke($"Broker peer ready for broadcasting: sessionId={_sessionId} peerId={peerId}.");
     }
 
     public void MarkLobbyReady()
@@ -382,13 +421,23 @@ public sealed class BrokerBackedNetService
             return;
         }
 
+        var added = false;
         lock (_knownPeerGate)
         {
-            if (_knownPeerIds.Add(peerId))
+            if (!_knownPeersById.ContainsKey(peerId))
             {
-                _log?.Invoke($"Broker peer tracked: sessionId={_sessionId} peerId={peerId}.");
+                _knownPeersById.Add(peerId, false);
+                added = true;
             }
         }
+
+        if (!added)
+        {
+            return;
+        }
+
+        _log?.Invoke($"Broker peer tracked: sessionId={_sessionId} peerId={peerId}.");
+        PeerTracked?.Invoke(peerId);
     }
 
     private void EnqueueInboundEnvelope(BrokerEnvelope envelope)

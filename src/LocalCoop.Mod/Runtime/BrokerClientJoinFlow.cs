@@ -118,6 +118,7 @@ public static class BrokerClientJoinFlow
     {
         try
         {
+            TryPopJoinScreenFromStack(screen, log);
             screen.GetType()
                 .GetMethod("set_Visible", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance, [typeof(bool)])
                 ?.Invoke(screen, [false]);
@@ -127,6 +128,42 @@ public static class BrokerClientJoinFlow
         {
             log?.Invoke($"Broker join friend screen: failed to hide join screen: {exception.GetType().Name}: {exception.Message}");
         }
+    }
+
+    private static void TryPopJoinScreenFromStack(object screen, Action<string>? log)
+    {
+        var stack = FindInstanceField(screen.GetType(), "_stack")?.GetValue(screen);
+        if (stack is null)
+        {
+            return;
+        }
+
+        var peek = stack.GetType()
+            .GetMethod("Peek", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?.Invoke(stack, null);
+        if (!ReferenceEquals(peek, screen))
+        {
+            return;
+        }
+
+        stack.GetType()
+            .GetMethod("Pop", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+            ?.Invoke(stack, null);
+        log?.Invoke("Broker join friend screen: popped join screen from submenu stack.");
+    }
+
+    private static FieldInfo? FindInstanceField(Type type, string name)
+    {
+        for (var current = type; current is not null; current = current.BaseType)
+        {
+            var field = current.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (field is not null)
+            {
+                return field;
+            }
+        }
+
+        return null;
     }
 
     private static Type? ResolveType(string fullName)

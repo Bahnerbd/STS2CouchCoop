@@ -25,6 +25,7 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
         _inner = inner;
         _type = type;
         _lastConnectedPeerIds = inner.ConnectedPeerIds.ToHashSet();
+        _inner.PeerTracked += HandlePeerTracked;
         _receiveLoop = _inner.RunReceiveLoopAsync(_receiveLoopCancellation.Token);
     }
 
@@ -39,8 +40,12 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
     public PlatformType Platform => PlatformType.None;
 
     public IReadOnlyList<NetClientData> ConnectedPeers =>
-        _inner.ConnectedPeerIds
-            .Select(peerId => new NetClientData { peerId = peerId })
+        _inner.ConnectedPeers
+            .Select(peer => new NetClientData
+            {
+                peerId = peer.PeerId,
+                readyForBroadcasting = peer.ReadyForBroadcasting
+            })
             .ToArray();
 
     public NetHost NetHost => null!;
@@ -101,7 +106,7 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
         var after = _inner.ConnectedPeerIds.ToHashSet();
         foreach (var peerId in after.Except(before))
         {
-            _clientConnected?.Invoke(peerId);
+            NotifyClientConnected(peerId);
         }
 
         foreach (var peerId in before.Except(after))
@@ -129,6 +134,7 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
 
     public void SetPeerReadyForBroadcasting(ulong peerId)
     {
+        _inner.SetPeerReadyForBroadcasting(peerId);
     }
 
     public ConnectionStats GetStatsForPeer(ulong peerId)
@@ -153,7 +159,23 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
             return;
         }
 
+        _inner.PeerTracked -= HandlePeerTracked;
         _receiveLoopCancellation.Cancel();
         _receiveLoopCancellation.Dispose();
+    }
+
+    private void HandlePeerTracked(ulong peerId)
+    {
+        NotifyClientConnected(peerId);
+    }
+
+    private void NotifyClientConnected(ulong peerId)
+    {
+        if (!_lastConnectedPeerIds.Add(peerId))
+        {
+            return;
+        }
+
+        _clientConnected?.Invoke(peerId);
     }
 }
