@@ -12,18 +12,18 @@ namespace LocalCoop.Mod.Tests;
 public sealed class BrokerClientJoinFlowTests
 {
     [TestMethod]
-    public void ShouldUseBrokerJoinOnlyForEnabledClientMode()
+    public void ShouldUseBrokerJoinForAnyEnabledBrokerMode()
     {
         var clientSettings = Settings(BrokerClientRole.Client);
         var hostSettings = Settings(BrokerClientRole.Host);
 
         Assert.IsTrue(BrokerClientJoinFlow.ShouldUseBrokerJoin(clientSettings));
-        Assert.IsFalse(BrokerClientJoinFlow.ShouldUseBrokerJoin(hostSettings));
+        Assert.IsTrue(BrokerClientJoinFlow.ShouldUseBrokerJoin(hostSettings));
         Assert.IsFalse(BrokerClientJoinFlow.ShouldUseBrokerJoin(new BrokerModeSettings(false, null, "client-0", "events.txt", null)));
     }
 
     [TestMethod]
-    public void CreateStandardLobbyJoinResultContainsOnlyIdentityPlayersWithoutCharacters()
+    public void CreateStandardLobbyJoinResultContainsOnlyLocalIdentityWithoutCharacters()
     {
         var result = BrokerClientJoinFlow.CreateStandardLobbyJoinResult();
 
@@ -33,15 +33,11 @@ public sealed class BrokerClientJoinFlowTests
 
         var response = result.joinResponse.Value;
         Assert.IsNotNull(response.playersInLobby);
-        Assert.AreEqual(2, response.playersInLobby.Count);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), response.playersInLobby[0].id);
-        Assert.AreEqual(0, response.playersInLobby[0].slotId);
+        Assert.AreEqual(1, response.playersInLobby.Count);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), response.playersInLobby[0].id);
+        Assert.AreEqual(1, response.playersInLobby[0].slotId);
         Assert.IsFalse(response.playersInLobby[0].isReady);
         Assert.IsNull(response.playersInLobby[0].character);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), response.playersInLobby[1].id);
-        Assert.AreEqual(1, response.playersInLobby[1].slotId);
-        Assert.IsFalse(response.playersInLobby[1].isReady);
-        Assert.IsNull(response.playersInLobby[1].character);
         Assert.IsNotNull(response.modifiers);
         Assert.AreEqual(0, response.modifiers.Count);
     }
@@ -58,13 +54,10 @@ public sealed class BrokerClientJoinFlowTests
         var players = response.playersInLobby;
 
         Assert.IsNotNull(players);
-        Assert.AreEqual(2, players!.Count);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), players[0].id);
-        Assert.AreEqual(0, players[0].slotId);
+        Assert.AreEqual(1, players!.Count);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(2), players[0].id);
+        Assert.AreEqual(2, players[0].slotId);
         Assert.IsNull(players[0].character);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(2), players[1].id);
-        Assert.AreEqual(2, players[1].slotId);
-        Assert.IsNull(players[1].character);
     }
 
     [TestMethod]

@@ -10,20 +10,15 @@ namespace LocalCoop.Mod.Tests;
 public sealed class BrokerLobbyServiceSubstitutionTests
 {
     [TestMethod]
-    public void ShouldSubstituteForLifecycleRequiresMatchingBrokerRole()
+    public void ResolveRoleForLifecycleUsesSts2LifecycleInsteadOfConfigRole()
     {
-        Assert.IsTrue(BrokerLobbyServiceSubstitution.ShouldSubstituteForLifecycle(
+        Assert.AreEqual(
             BrokerClientRole.Host,
-            "InitializeMultiplayerAsHost"));
-        Assert.IsTrue(BrokerLobbyServiceSubstitution.ShouldSubstituteForLifecycle(
+            BrokerLobbyServiceSubstitution.ResolveRoleForLifecycle("InitializeMultiplayerAsHost"));
+        Assert.AreEqual(
             BrokerClientRole.Client,
-            "InitializeMultiplayerAsClient"));
-        Assert.IsFalse(BrokerLobbyServiceSubstitution.ShouldSubstituteForLifecycle(
-            BrokerClientRole.Client,
-            "InitializeMultiplayerAsHost"));
-        Assert.IsFalse(BrokerLobbyServiceSubstitution.ShouldSubstituteForLifecycle(
-            BrokerClientRole.Host,
-            "InitializeMultiplayerAsClient"));
+            BrokerLobbyServiceSubstitution.ResolveRoleForLifecycle("InitializeMultiplayerAsClient"));
+        Assert.IsNull(BrokerLobbyServiceSubstitution.ResolveRoleForLifecycle("InitializeSinglePlayer"));
     }
 
     [TestMethod]
@@ -31,17 +26,48 @@ public sealed class BrokerLobbyServiceSubstitutionTests
     {
         var originalService = new object();
         object?[] args = [originalService, 4];
-        var settings = EnabledSettings();
+        var settings = EnabledSettings(BrokerClientRole.Client);
 
         var substituted = BrokerLobbyServiceSubstitution.TrySubstituteFirstArgument(
             settings,
             args,
+            BrokerClientRole.Host,
             () => new CapturingTransport(),
             _ => { });
 
         Assert.IsTrue(substituted);
         Assert.AreNotSame(originalService, args[0]);
         Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), args[0]!.GetType().GetProperty("NetId")!.GetValue(args[0]));
+        Assert.AreEqual(NetGameType.Host, args[0]!.GetType().GetProperty("Type")!.GetValue(args[0]));
+    }
+
+    [TestMethod]
+    public void TrySubstituteFirstArgumentUsesClientLifecycleRoleWhenConfigSaysHost()
+    {
+        object?[] args = [new object()];
+        var settings = EnabledSettings(BrokerClientRole.Host);
+
+        var substituted = BrokerLobbyServiceSubstitution.TrySubstituteFirstArgument(
+            settings,
+            args,
+            BrokerClientRole.Client,
+            () => new CapturingTransport(),
+            _ => { });
+
+        Assert.IsTrue(substituted);
+        Assert.AreEqual(NetGameType.Client, args[0]!.GetType().GetProperty("Type")!.GetValue(args[0]));
+    }
+
+    [TestMethod]
+    public void CreateRegistrationConfigUsesEffectiveLifecycleRole()
+    {
+        var settings = EnabledSettings(BrokerClientRole.Client);
+
+        var config = BrokerLobbyServiceSubstitution.CreateRegistrationConfig(settings, BrokerClientRole.Host);
+
+        Assert.AreEqual(BrokerClientRole.Host, config.Role);
+        Assert.AreEqual(0, config.ClientIndex);
+        Assert.AreEqual("local-test", config.SessionId);
     }
 
     [TestMethod]
@@ -54,6 +80,7 @@ public sealed class BrokerLobbyServiceSubstitutionTests
         var substituted = BrokerLobbyServiceSubstitution.TrySubstituteFirstArgument(
             settings,
             args,
+            BrokerClientRole.Host,
             () => throw new InvalidOperationException("transport should not be created"),
             _ => { });
 
@@ -89,11 +116,11 @@ public sealed class BrokerLobbyServiceSubstitutionTests
         Assert.AreEqual(1, receivedCount);
     }
 
-    private static BrokerModeSettings EnabledSettings()
+    private static BrokerModeSettings EnabledSettings(BrokerClientRole role)
     {
         return new BrokerModeSettings(
             true,
-            new BrokerClientConfig(BrokerClientRole.Host, 0, "127.0.0.1", 38989, "local-test"),
+            new BrokerClientConfig(role, 0, "127.0.0.1", 38989, "local-test"),
             "client-0",
             "events.txt",
             null);

@@ -14,7 +14,7 @@ public static class BrokerClientJoinFlow
     public static bool ShouldUseBrokerJoin(BrokerModeSettings settings)
     {
         return settings.Enabled
-            && settings.Config is { Role: BrokerClientRole.Client };
+            && settings.Config is not null;
     }
 
     public static JoinResult CreateStandardLobbyJoinResult()
@@ -38,17 +38,7 @@ public static class BrokerClientJoinFlow
 
     private static List<LobbyPlayer> CreateInitialLobbyPlayers(int localClientIndex)
     {
-        var players = new List<LobbyPlayer>
-        {
-            CreateLobbyPlayer(0)
-        };
-
-        if (localClientIndex != 0)
-        {
-            players.Add(CreateLobbyPlayer(localClientIndex));
-        }
-
-        return players;
+        return [CreateLobbyPlayer(localClientIndex)];
     }
 
     private static LobbyPlayer CreateLobbyPlayer(int clientIndex)

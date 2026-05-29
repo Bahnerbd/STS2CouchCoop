@@ -634,7 +634,7 @@ public sealed class BrokerBackedNetServiceTests
 
         var sent = transport.Sent.Single();
         Assert.AreEqual(typeof(LobbyPlayerSetReadyMessage).AssemblyQualifiedName, sent.MessageType);
-        Assert.AreEqual("client-0", sent.TargetClientId);
+        Assert.IsNull(sent.TargetClientId);
         Assert.IsFalse(logs.Any(log => log.Contains("applying remote state", StringComparison.Ordinal)));
     }
 
@@ -687,7 +687,7 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
-    public async Task ClientBroadcastSendRoutesToHost()
+    public async Task ClientUntargetedSendRemainsUntargetedForBrokerHostRouting()
     {
         var transport = new CapturingTransport();
         var service = new BrokerBackedNetService(
@@ -700,7 +700,7 @@ public sealed class BrokerBackedNetServiceTests
         await service.SendMessageAsync(new FakeLobbyMessage("host-only"), targetPlayerId: null, CancellationToken.None);
 
         var envelope = transport.Sent.Single();
-        Assert.AreEqual("client-0", envelope.TargetClientId);
+        Assert.IsNull(envelope.TargetClientId);
     }
 
     [TestMethod]
@@ -718,6 +718,19 @@ public sealed class BrokerBackedNetServiceTests
 
         var envelope = transport.Sent.Single();
         Assert.IsNull(envelope.TargetClientId);
+    }
+
+    [TestMethod]
+    public void ClientServiceDoesNotAssumeClientZeroIsConnectedHost()
+    {
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-1",
+            clientIndex: 1,
+            role: Runtime.BrokerClientRole.Client,
+            transport: new CapturingTransport());
+
+        Assert.AreEqual(0, service.ConnectedPeerIds.Count);
     }
 
     [TestMethod]

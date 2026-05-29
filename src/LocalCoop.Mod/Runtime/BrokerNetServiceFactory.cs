@@ -5,7 +5,8 @@ public static class BrokerNetServiceFactory
     public static BrokerBackedNetService? TryCreate(
         BrokerModeSettings settings,
         IBrokerEnvelopeTransport transport,
-        Action<string>? log = null)
+        Action<string>? log = null,
+        BrokerClientRole? effectiveRole = null)
     {
         if (!settings.Enabled || settings.Config is null)
         {
@@ -18,6 +19,6 @@ public static class BrokerNetServiceFactory
             settings.Config.ClientIndex,
             transport,
             log,
-            settings.Config.Role);
+            effectiveRole ?? settings.Config.Role);
     }
 }

@@ -7,6 +7,7 @@ public static class BrokerLobbyServiceSubstitution
     public static bool TrySubstituteFirstArgument(
         BrokerModeSettings settings,
         object?[] args,
+        BrokerClientRole effectiveRole,
         Func<IBrokerEnvelopeTransport> createTransport,
         Action<string> log)
     {
@@ -15,15 +16,15 @@ public static class BrokerLobbyServiceSubstitution
             return false;
         }
 
-        log($"Broker lobby service substitution connecting: clientId={settings.ClientId} endpoint={settings.Config.Host}:{settings.Config.Port} sessionId={settings.Config.SessionId}.");
-        var brokerService = BrokerNetServiceFactory.TryCreate(settings, createTransport(), log);
+        log($"Broker lobby service substitution connecting: clientId={settings.ClientId} configRole={settings.Config.Role} effectiveRole={effectiveRole} endpoint={settings.Config.Host}:{settings.Config.Port} sessionId={settings.Config.SessionId}.");
+        var brokerService = BrokerNetServiceFactory.TryCreate(settings, createTransport(), log, effectiveRole);
         if (brokerService is null)
         {
             return false;
         }
 
-        args[0] = new BrokerNetGameService(brokerService, ToNetGameType(settings.Config.Role));
-        log($"Broker lobby service substituted: clientId={settings.ClientId} netId={brokerService.NetId}.");
+        args[0] = new BrokerNetGameService(brokerService, ToNetGameType(effectiveRole));
+        log($"Broker lobby service substituted: clientId={settings.ClientId} effectiveRole={effectiveRole} netId={brokerService.NetId}.");
         return true;
     }
 
@@ -40,13 +41,21 @@ public static class BrokerLobbyServiceSubstitution
         return true;
     }
 
-    public static bool ShouldSubstituteForLifecycle(BrokerClientRole role, string methodName)
+    public static BrokerClientConfig CreateRegistrationConfig(
+        BrokerModeSettings settings,
+        BrokerClientRole effectiveRole)
     {
-        return role switch
+        var config = settings.Config ?? throw new InvalidOperationException("Broker config is missing.");
+        return config with { Role = effectiveRole };
+    }
+
+    public static BrokerClientRole? ResolveRoleForLifecycle(string methodName)
+    {
+        return methodName switch
         {
-            BrokerClientRole.Host => string.Equals(methodName, "InitializeMultiplayerAsHost", StringComparison.Ordinal),
-            BrokerClientRole.Client => string.Equals(methodName, "InitializeMultiplayerAsClient", StringComparison.Ordinal),
-            _ => false
+            "InitializeMultiplayerAsHost" => BrokerClientRole.Host,
+            "InitializeMultiplayerAsClient" => BrokerClientRole.Client,
+            _ => null
         };
     }
 

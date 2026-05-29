@@ -38,6 +38,44 @@ public sealed class BrokerModeSettingsTests
     }
 
     [TestMethod]
+    public void LoadFromDirectoryAllowsHostAtNonzeroClientIndex()
+    {
+        var modDirectory = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(modDirectory, BrokerModeSettings.MarkerFileName), """
+            role=host
+            clientIndex=2
+            endpoint=127.0.0.1:38989
+            sessionId=local-test
+            """);
+
+        var settings = BrokerModeSettings.LoadFromDirectory(modDirectory);
+
+        Assert.IsTrue(settings.Enabled);
+        Assert.AreEqual(BrokerClientRole.Host, settings.Config?.Role);
+        Assert.AreEqual(2, settings.Config?.ClientIndex);
+        Assert.AreEqual("client-2", settings.ClientId);
+    }
+
+    [TestMethod]
+    public void LoadFromDirectoryAllowsClientAtClientIndexZero()
+    {
+        var modDirectory = CreateTempDirectory();
+        File.WriteAllText(Path.Combine(modDirectory, BrokerModeSettings.MarkerFileName), """
+            role=client
+            clientIndex=0
+            endpoint=127.0.0.1:38989
+            sessionId=local-test
+            """);
+
+        var settings = BrokerModeSettings.LoadFromDirectory(modDirectory);
+
+        Assert.IsTrue(settings.Enabled);
+        Assert.AreEqual(BrokerClientRole.Client, settings.Config?.Role);
+        Assert.AreEqual(0, settings.Config?.ClientIndex);
+        Assert.AreEqual("client-0", settings.ClientId);
+    }
+
+    [TestMethod]
     public void LoadUsesLocalCoopConfigDirectoryBeforeModDirectory()
     {
         var modDirectory = CreateTempDirectory();

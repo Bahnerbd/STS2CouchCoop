@@ -37,17 +37,18 @@ public static class BrokerLobbyServiceSubstitutionPatch
         var log = new BrokerEventLog(settings.EventLogPath);
         try
         {
-            if (settings.Config is not null
-                && !BrokerLobbyServiceSubstitution.ShouldSubstituteForLifecycle(settings.Config.Role, __originalMethod.Name))
+            var effectiveRole = BrokerLobbyServiceSubstitution.ResolveRoleForLifecycle(__originalMethod.Name);
+            if (effectiveRole is null)
             {
-                log.Write($"Broker lobby service substitution skipped: role={settings.Config.Role} is not valid for {__originalMethod.Name}.");
+                log.Write($"Broker lobby service substitution skipped: no broker role for {__originalMethod.Name}.");
                 return;
             }
 
             BrokerLobbyServiceSubstitution.TrySubstituteFirstArgument(
                 settings,
                 __args,
-                () => CreateTransport(settings),
+                effectiveRole.Value,
+                () => CreateTransport(settings, effectiveRole.Value),
                 log.Write);
         }
         catch (Exception exception)
@@ -75,9 +76,9 @@ public static class BrokerLobbyServiceSubstitutionPatch
         }
     }
 
-    private static IBrokerEnvelopeTransport CreateTransport(BrokerModeSettings settings)
+    private static IBrokerEnvelopeTransport CreateTransport(BrokerModeSettings settings, BrokerClientRole effectiveRole)
     {
-        var config = settings.Config ?? throw new InvalidOperationException("Broker config is missing.");
+        var config = BrokerLobbyServiceSubstitution.CreateRegistrationConfig(settings, effectiveRole);
         return BrokerEnvelopeTransportConnector.ConnectBlocking(
             config,
             settings.ClientId,

@@ -20,16 +20,6 @@ public sealed record BrokerClientConfig(
             throw new FormatException("sessionId must not be blank.");
         }
 
-        if (clientIndex == 0 && role != BrokerClientRole.Host)
-        {
-            throw new FormatException("clientIndex 0 must use host role.");
-        }
-
-        if (clientIndex > 0 && role != BrokerClientRole.Client)
-        {
-            throw new FormatException("clientIndex 1-3 must use client role.");
-        }
-
         return new BrokerClientConfig(role, clientIndex, host, port, sessionId);
     }
 

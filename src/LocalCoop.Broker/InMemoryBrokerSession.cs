@@ -51,21 +51,12 @@ public sealed class InMemoryBrokerSession
 
         if (registration.Role == BrokerClientRole.Host)
         {
-            if (registration.ClientIndex != 0)
-            {
-                throw new InvalidOperationException("host must register at client index 0.");
-            }
-
             if (HostClientId is not null)
             {
                 throw new InvalidOperationException($"host is already registered by '{HostClientId}'.");
             }
 
             HostClientId = registration.ClientId;
-        }
-        else if (registration.ClientIndex == 0)
-        {
-            throw new InvalidOperationException("client index 0 is reserved for the host.");
         }
 
         _clientsById.Add(registration.ClientId, registration);
@@ -93,7 +84,7 @@ public sealed class InMemoryBrokerSession
             throw new InvalidOperationException($"envelope session '{envelope.SessionId}' does not match broker session '{SessionId}'.");
         }
 
-        if (!_clientsById.ContainsKey(envelope.SourceClientId))
+        if (!_clientsById.TryGetValue(envelope.SourceClientId, out var source))
         {
             throw new InvalidOperationException($"source client '{envelope.SourceClientId}' is not registered.");
         }
@@ -106,6 +97,16 @@ public sealed class InMemoryBrokerSession
             }
 
             return [new BrokerRoute(targetClientId, envelope)];
+        }
+
+        if (source.Role == BrokerClientRole.Client)
+        {
+            if (HostClientId is null)
+            {
+                throw new InvalidOperationException("cannot route untargeted client envelope because no host is registered.");
+            }
+
+            return [new BrokerRoute(HostClientId, envelope)];
         }
 
         return _clientsById.Keys

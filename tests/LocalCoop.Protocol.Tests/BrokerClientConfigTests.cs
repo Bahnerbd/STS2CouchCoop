@@ -37,15 +37,30 @@ public sealed class BrokerClientConfigTests
     }
 
     [TestMethod]
-    public void RequiresHostRoleAtClientIndexZero()
+    public void ParsesClientConfigAtClientIndexZero()
     {
-        var exception = Assert.ThrowsException<FormatException>(() => BrokerClientConfig.Parse("""
+        var config = BrokerClientConfig.Parse("""
             role=client
             clientIndex=0
             endpoint=127.0.0.1:38989
             sessionId=local-test
-            """));
+            """);
 
-        StringAssert.Contains(exception.Message, "host");
+        Assert.AreEqual(BrokerClientRole.Client, config.Role);
+        Assert.AreEqual(0, config.ClientIndex);
+    }
+
+    [TestMethod]
+    public void ParsesHostConfigAtNonzeroClientIndex()
+    {
+        var config = BrokerClientConfig.Parse("""
+            role=host
+            clientIndex=2
+            endpoint=127.0.0.1:38989
+            sessionId=local-test
+            """);
+
+        Assert.AreEqual(BrokerClientRole.Host, config.Role);
+        Assert.AreEqual(2, config.ClientIndex);
     }
 }

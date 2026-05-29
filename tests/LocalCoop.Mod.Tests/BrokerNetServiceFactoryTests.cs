@@ -127,7 +127,7 @@ public sealed class BrokerNetServiceFactoryTests
     }
 
     [TestMethod]
-    public void BrokerNetGameServiceConnectedPeersIncludesHostForClient()
+    public void BrokerNetGameServiceConnectedPeersDoesNotAssumeHostClientIndex()
     {
         var inner = new BrokerBackedNetService(
             "local-test",
@@ -136,9 +136,7 @@ public sealed class BrokerNetServiceFactoryTests
             new CapturingTransport());
         using var service = new BrokerNetGameService(inner, NetGameType.Client);
 
-        var peer = service.ConnectedPeers.Single();
-
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), peer.peerId);
+        Assert.AreEqual(0, service.ConnectedPeers.Count);
     }
 
     [TestMethod]

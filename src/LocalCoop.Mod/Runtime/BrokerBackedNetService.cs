@@ -7,7 +7,6 @@ public sealed class BrokerBackedNetService
     private readonly string _sessionId;
     private readonly string _clientId;
     private readonly int _clientIndex;
-    private readonly BrokerClientRole _role;
     private readonly IBrokerEnvelopeTransport _transport;
     private readonly Action<string>? _log;
     private readonly Dictionary<string, List<Delegate>> _handlersByMessageType = new(StringComparer.Ordinal);
@@ -31,15 +30,10 @@ public sealed class BrokerBackedNetService
             ? throw new ArgumentException("Client id must not be blank.", nameof(clientId))
             : clientId;
         _clientIndex = clientIndex;
-        _role = role ?? (clientIndex == 0 ? BrokerClientRole.Host : BrokerClientRole.Client);
         NetId = BrokerPlayerId.ForClientIndex(clientIndex);
         _transport = transport;
         _log = log;
         _messageCoordinator = new BrokerLobbyMessageCoordinator(log);
-        if (_role == BrokerClientRole.Client)
-        {
-            _knownPeersById.Add(BrokerPlayerId.ForClientIndex(0), false);
-        }
     }
 
     public event Action<ulong>? PeerTracked;
@@ -127,7 +121,7 @@ public sealed class BrokerBackedNetService
 
     public async Task SendMessageAsync<T>(T message, ulong? targetPlayerId, CancellationToken cancellationToken)
     {
-        var targetClientId = targetPlayerId is null ? GetDefaultTargetClientId() : PlayerIdToClientId(targetPlayerId.Value);
+        var targetClientId = targetPlayerId is null ? null : PlayerIdToClientId(targetPlayerId.Value);
         if (ShouldSuppressOutboundMessage(message, out var reason))
         {
             _log?.Invoke($"Broker suppressed outbound: sessionId={_sessionId} source={_clientId} messageType={MessageTypeKey<T>()} reason={reason}{PayloadSuffix(message)}.");
@@ -486,8 +480,4 @@ public sealed class BrokerBackedNetService
             : 0;
     }
 
-    private string? GetDefaultTargetClientId()
-    {
-        return _role == BrokerClientRole.Client ? "client-0" : null;
-    }
 }
