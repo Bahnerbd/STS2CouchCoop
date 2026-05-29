@@ -38,15 +38,20 @@ public static class BrokerClientJoinFlow
 
     private static List<LobbyPlayer> CreateInitialLobbyPlayers(int localClientIndex)
     {
-        return [CreateLobbyPlayer(localClientIndex)];
+        var hostClientIndex = localClientIndex == 0 ? 1 : 0;
+        return
+        [
+            CreateLobbyPlayer(hostClientIndex, slotId: 0),
+            CreateLobbyPlayer(localClientIndex, slotId: 1)
+        ];
     }
 
-    private static LobbyPlayer CreateLobbyPlayer(int clientIndex)
+    private static LobbyPlayer CreateLobbyPlayer(int clientIndex, int slotId)
     {
         return new LobbyPlayer
         {
             id = BrokerPlayerId.ForClientIndex(clientIndex),
-            slotId = clientIndex,
+            slotId = slotId,
             maxMultiplayerAscensionUnlocked = 0,
             isReady = false
         };
