@@ -22,6 +22,9 @@ public sealed class LocalCoopPatchInstallerTests
         CollectionAssert.Contains(
             LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
             typeof(LocalCoop.Mod.Patches.BrokerClientLobbyHandshakePatch));
+        CollectionAssert.Contains(
+            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
+            typeof(LocalCoop.Mod.Patches.BrokerBeginRunPatch));
     }
 
     [TestMethod]

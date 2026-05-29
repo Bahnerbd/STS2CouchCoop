@@ -147,7 +147,7 @@ public sealed class BrokerBackedNetService
             Interlocked.Increment(ref _sequence));
         RecordLatestLobbyCharacter(envelope);
         TrackKnownPeers(envelope);
-        _log?.Invoke($"Broker outbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
+        _log?.Invoke($"Broker outbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}{PayloadSuffix(message)}.");
         await _transport.SendEnvelopeAsync(envelope, cancellationToken);
         if (IsClientLobbyJoinResponse(envelope) && targetClientId is not null)
         {
@@ -202,9 +202,9 @@ public sealed class BrokerBackedNetService
         {
             try
             {
-                _log?.Invoke($"Broker inbound flushed: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
+                _log?.Invoke($"Broker inbound flushed: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}{PayloadSuffix(envelope)}.");
                 DispatchEnvelopeAsync(envelope, CancellationToken.None).GetAwaiter().GetResult();
-                _log?.Invoke($"Broker inbound dispatched: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
+                _log?.Invoke($"Broker inbound dispatched: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}{PayloadSuffix(envelope)}.");
             }
             catch (Exception exception)
             {
@@ -308,7 +308,7 @@ public sealed class BrokerBackedNetService
         RecordLatestLobbyCharacter(envelope);
         TrackKnownPeers(envelope);
 
-        _log?.Invoke($"Broker inbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
+        _log?.Invoke($"Broker inbound: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}{PayloadSuffix(envelope)}.");
         if (IsClientLobbyJoinResponse(envelope))
         {
             _hasReceivedHostJoinResponse = true;
@@ -443,7 +443,7 @@ public sealed class BrokerBackedNetService
     private void EnqueueInboundEnvelope(BrokerEnvelope envelope)
     {
         _messageCoordinator.Enqueue(envelope);
-        _log?.Invoke($"Broker inbound queued: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
+        _log?.Invoke($"Broker inbound queued: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}{PayloadSuffix(envelope)}.");
     }
 
     private BrokerEnvelope[] DrainInboundEnvelopes()
@@ -468,7 +468,7 @@ public sealed class BrokerBackedNetService
                 TargetClientId = targetClientId,
                 Sequence = Interlocked.Increment(ref _sequence)
             };
-            _log?.Invoke($"Broker replay outbound: sessionId={replay.SessionId} source={replay.SourceClientId} target={replay.TargetClientId ?? "broadcast"} messageType={replay.MessageType} sequence={replay.Sequence}.");
+            _log?.Invoke($"Broker replay outbound: sessionId={replay.SessionId} source={replay.SourceClientId} target={replay.TargetClientId ?? "broadcast"} messageType={replay.MessageType} sequence={replay.Sequence}{PayloadSuffix(replay)}.");
             await _transport.SendEnvelopeAsync(replay, cancellationToken).ConfigureAwait(false);
         }
     }
@@ -538,6 +538,18 @@ public sealed class BrokerBackedNetService
     private static string MessageTypeKey<T>()
     {
         return typeof(T).AssemblyQualifiedName ?? typeof(T).FullName ?? typeof(T).Name;
+    }
+
+    private static string PayloadSuffix(object? message)
+    {
+        var summary = BrokerLobbyPayloadDiagnostics.Summarize(message);
+        return string.IsNullOrWhiteSpace(summary) ? string.Empty : $" payload={summary}";
+    }
+
+    private static string PayloadSuffix(BrokerEnvelope envelope)
+    {
+        var summary = BrokerLobbyPayloadDiagnostics.Summarize(envelope);
+        return string.IsNullOrWhiteSpace(summary) ? string.Empty : $" payload={summary}";
     }
 
     private static string PlayerIdToClientId(ulong playerId)
