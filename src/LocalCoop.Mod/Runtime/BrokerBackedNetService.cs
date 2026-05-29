@@ -2,6 +2,8 @@ namespace LocalCoop.Mod.Runtime;
 
 public sealed class BrokerBackedNetService
 {
+    private static readonly TimeSpan RemoteCharacterEchoSuppressWindow = TimeSpan.FromMilliseconds(150);
+
     private readonly string _sessionId;
     private readonly string _clientId;
     private readonly int _clientIndex;
@@ -10,6 +12,7 @@ public sealed class BrokerBackedNetService
     private readonly Dictionary<string, List<Delegate>> _handlersByMessageType = new(StringComparer.Ordinal);
     private long _sequence;
     private bool _hasReceivedHostJoinResponse;
+    private DateTimeOffset? _lastInboundRemoteCharacterChangeAt;
 
     public BrokerBackedNetService(
         string sessionId,
@@ -164,14 +167,14 @@ public sealed class BrokerBackedNetService
     private bool ShouldSuppressOutboundMessage<T>(T message, out string reason)
     {
         var messageType = typeof(T);
+        var isLobbyCharacterChange = IsLobbyPlayerChangedCharacter(messageType);
         if (string.Equals(messageType.FullName, "MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync.PeerInputMessage", StringComparison.Ordinal))
         {
             reason = "peer input is not required for lobby-only broker sync";
             return true;
         }
 
-        if (string.Equals(messageType.FullName, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerChangedCharacterMessage", StringComparison.Ordinal)
-            && IsNullCharacterChange(message))
+        if (isLobbyCharacterChange && IsNullCharacterChange(message))
         {
             reason = "null character change is an initialization artifact";
             return true;
@@ -179,9 +182,17 @@ public sealed class BrokerBackedNetService
 
         if (_clientIndex != 0
             && !_hasReceivedHostJoinResponse
-            && string.Equals(messageType.FullName, "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerChangedCharacterMessage", StringComparison.Ordinal))
+            && isLobbyCharacterChange)
         {
             reason = "waiting for host join response";
+            return true;
+        }
+
+        if (isLobbyCharacterChange
+            && _lastInboundRemoteCharacterChangeAt is { } lastInboundRemoteCharacterChangeAt
+            && DateTimeOffset.UtcNow - lastInboundRemoteCharacterChangeAt <= RemoteCharacterEchoSuppressWindow)
+        {
+            reason = "recent remote character change";
             return true;
         }
 
@@ -211,6 +222,12 @@ public sealed class BrokerBackedNetService
             _hasReceivedHostJoinResponse = true;
         }
 
+        if (IsLobbyPlayerChangedCharacter(envelope)
+            && !string.Equals(envelope.SourceClientId, _clientId, StringComparison.Ordinal))
+        {
+            _lastInboundRemoteCharacterChangeAt = DateTimeOffset.UtcNow;
+        }
+
         if (!_handlersByMessageType.TryGetValue(envelope.MessageType, out var handlers))
         {
             return Task.CompletedTask;
@@ -238,6 +255,21 @@ public sealed class BrokerBackedNetService
     {
         return envelope.MessageType.StartsWith(
             "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.ClientLobbyJoinResponseMessage,",
+            StringComparison.Ordinal);
+    }
+
+    private static bool IsLobbyPlayerChangedCharacter(BrokerEnvelope envelope)
+    {
+        return envelope.MessageType.StartsWith(
+            "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerChangedCharacterMessage,",
+            StringComparison.Ordinal);
+    }
+
+    private static bool IsLobbyPlayerChangedCharacter(Type messageType)
+    {
+        return string.Equals(
+            messageType.FullName,
+            "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyPlayerChangedCharacterMessage",
             StringComparison.Ordinal);
     }
 

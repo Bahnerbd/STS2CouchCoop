@@ -146,6 +146,35 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task ClientSendMessageSkipsCharacterChangeEchoAfterRemoteCharacterChange()
+    {
+        var transport = new CapturingTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-1",
+            clientIndex: 1,
+            transport,
+            logs.Add);
+        var message = CreateUninitializedCharacterChange();
+        await service.DispatchEnvelopeAsync(EnvelopeFor<ClientLobbyJoinResponseMessage>("client-0", "client-1", sequence: 1), CancellationToken.None);
+        await service.DispatchEnvelopeAsync(EnvelopeFor<LobbyPlayerChangedCharacterMessage>("client-0", targetClientId: null, sequence: 2), CancellationToken.None);
+
+        try
+        {
+            service.SendMessage(message);
+        }
+        catch (Exception exception)
+        {
+            Assert.Fail($"Expected immediate character-change echo to be suppressed, but send threw {exception.GetType().Name}: {exception.Message}");
+        }
+
+        Assert.AreEqual(0, transport.Sent.Count);
+        Assert.IsTrue(logs.Any(log => log.Contains("suppressed outbound", StringComparison.Ordinal)
+            && log.Contains("recent remote character change", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
     public void TracksConnectionLoadingAndRawLobbyIdentifier()
     {
         var service = new BrokerBackedNetService(
@@ -407,6 +436,27 @@ public sealed class BrokerBackedNetServiceTests
         {
             value = reader.ReadString();
         }
+    }
+
+    private static LobbyPlayerChangedCharacterMessage CreateUninitializedCharacterChange()
+    {
+        var concreteCharacterType = typeof(CharacterModel).Assembly.GetTypes()
+            .First(type => !type.IsAbstract && typeof(CharacterModel).IsAssignableFrom(type));
+        return new LobbyPlayerChangedCharacterMessage
+        {
+            character = (CharacterModel)RuntimeHelpers.GetUninitializedObject(concreteCharacterType)
+        };
+    }
+
+    private static Runtime.BrokerEnvelope EnvelopeFor<T>(string sourceClientId, string? targetClientId, long sequence)
+    {
+        return new Runtime.BrokerEnvelope(
+            "local-test",
+            sourceClientId,
+            targetClientId,
+            typeof(T).AssemblyQualifiedName ?? typeof(T).FullName ?? typeof(T).Name,
+            [],
+            sequence);
     }
 
     private sealed class CapturingTransport : IBrokerEnvelopeTransport
