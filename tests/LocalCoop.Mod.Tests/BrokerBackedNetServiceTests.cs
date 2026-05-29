@@ -117,6 +117,25 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task DispatchEnvelopePreservesPublicFieldMessages()
+    {
+        var transport = new CapturingTransport();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
+        FieldLobbyMessage received = default;
+        service.RegisterMessageHandler<FieldLobbyMessage>(message => received = message);
+
+        await service.DispatchEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            new FieldLobbyMessage { kind = "ready" },
+            sequence: 1),
+            CancellationToken.None);
+
+        Assert.AreEqual("ready", received.kind);
+    }
+
+    [TestMethod]
     public async Task DispatchEnvelopeLogsInboundEnvelope()
     {
         var transport = new CapturingTransport();
@@ -249,6 +268,11 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     private readonly record struct FakeLobbyMessage(string Kind);
+
+    private struct FieldLobbyMessage
+    {
+        public string? kind;
+    }
 
     private sealed class CapturingTransport : IBrokerEnvelopeTransport
     {

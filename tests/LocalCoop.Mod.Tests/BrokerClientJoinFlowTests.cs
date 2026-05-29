@@ -2,6 +2,7 @@ using LocalCoop.Mod.Runtime;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Unlocks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace LocalCoop.Mod.Tests;
@@ -48,6 +49,29 @@ public sealed class BrokerClientJoinFlowTests
         Assert.IsFalse(result.HasValue);
     }
 
+    [TestMethod]
+    public void CreateJoinRequestUsesProgressAndUnlockState()
+    {
+        var unlockState = new SerializableUnlockState();
+
+        var request = BrokerClientJoinFlow.CreateJoinRequest(7, unlockState);
+
+        Assert.AreEqual(7, request.maxAscensionUnlocked);
+        Assert.AreEqual(unlockState, request.unlockState);
+    }
+
+    [TestMethod]
+    public void TryHideJoinScreenInvokesGodotVisibleSetter()
+    {
+        var screen = new FakeJoinScreen();
+        var messages = new List<string>();
+
+        BrokerClientJoinFlow.TryHideJoinScreen(screen, messages.Add);
+
+        Assert.IsFalse(screen.VisibleState);
+        StringAssert.Contains(messages.Single(), "hiding join screen");
+    }
+
     private static BrokerModeSettings Settings(BrokerClientRole role)
     {
         return new BrokerModeSettings(
@@ -56,5 +80,15 @@ public sealed class BrokerClientJoinFlowTests
             role == BrokerClientRole.Host ? "client-0" : "client-1",
             "events.txt",
             null);
+    }
+
+    private sealed class FakeJoinScreen
+    {
+        public bool VisibleState { get; private set; } = true;
+
+        public void set_Visible(bool visible)
+        {
+            VisibleState = visible;
+        }
     }
 }

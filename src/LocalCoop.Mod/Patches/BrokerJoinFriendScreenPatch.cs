@@ -37,6 +37,7 @@ public static class BrokerJoinFriendScreenPatch
             log.Write("Broker join friend screen: triggering broker client join.");
             AccessTools.Method(__instance.GetType(), "JoinGame")
                 ?.Invoke(__instance, [new BrokerClientJoinFlow.PlaceholderClientConnectionInitializer()]);
+            BrokerClientJoinFlow.TryHideJoinScreen(__instance, log.Write);
         }
         catch (Exception exception)
         {

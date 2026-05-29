@@ -4,7 +4,10 @@ namespace LocalCoop.Mod.Runtime;
 
 public static class BrokerEnvelopeMessageSerializer
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        IncludeFields = true
+    };
 
     public static BrokerEnvelope ToEnvelope<T>(
         string sessionId,
