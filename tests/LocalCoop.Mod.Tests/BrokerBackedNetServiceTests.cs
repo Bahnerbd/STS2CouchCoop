@@ -245,6 +245,33 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task SendJoinResponseDefersCachedLobbyCharacterReplayUntilAfterResponseTurn()
+    {
+        var transport = new CapturingTransport();
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-0",
+            clientIndex: 0,
+            transport);
+        await service.DispatchEnvelopeAsync(EnvelopeFor<LobbyPlayerChangedCharacterMessage>("client-0", targetClientId: null, sequence: 7), CancellationToken.None);
+        var joinResponse = new ClientLobbyJoinResponseMessage
+        {
+            playersInLobby = [],
+            modifiers = []
+        };
+
+        var sendTask = service.SendMessageAsync(joinResponse, BrokerPlayerId.ForClientIndex(1), CancellationToken.None);
+
+        Assert.AreEqual(1, transport.Sent.Count);
+        Assert.AreEqual(typeof(ClientLobbyJoinResponseMessage).AssemblyQualifiedName, transport.Sent[0].MessageType);
+
+        await sendTask.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.AreEqual(2, transport.Sent.Count);
+        Assert.AreEqual(typeof(LobbyPlayerChangedCharacterMessage).AssemblyQualifiedName, transport.Sent[1].MessageType);
+    }
+
+    [TestMethod]
     public async Task SendJoinResponseDoesNotReplayJoiningClientsOwnCachedCharacterState()
     {
         var transport = new CapturingTransport();

@@ -3,6 +3,7 @@ namespace LocalCoop.Mod.Runtime;
 public sealed class BrokerBackedNetService
 {
     private static readonly TimeSpan RemoteCharacterEchoSuppressWindow = TimeSpan.FromMilliseconds(150);
+    private static readonly TimeSpan CachedLobbyCharacterReplayDelay = TimeSpan.FromMilliseconds(150);
 
     private readonly string _sessionId;
     private readonly string _clientId;
@@ -282,19 +283,18 @@ public sealed class BrokerBackedNetService
 
     private async Task ReplayLatestLobbyCharactersAsync(string targetClientId, CancellationToken cancellationToken)
     {
-        BrokerEnvelope[] cachedCharacters;
-        lock (_latestLobbyCharacterGate)
+        var cachedCharacters = GetReplayableLobbyCharacters(targetClientId);
+        if (cachedCharacters.Length == 0)
         {
-            cachedCharacters = _latestLobbyCharacterBySourceClientId.Values.ToArray();
+            return;
         }
+
+        _log?.Invoke($"Broker replay scheduled: sessionId={_sessionId} target={targetClientId} delayMs={CachedLobbyCharacterReplayDelay.TotalMilliseconds:0} count={cachedCharacters.Length}.");
+        await Task.Delay(CachedLobbyCharacterReplayDelay, cancellationToken).ConfigureAwait(false);
+        cachedCharacters = GetReplayableLobbyCharacters(targetClientId);
 
         foreach (var cachedCharacter in cachedCharacters)
         {
-            if (string.Equals(cachedCharacter.SourceClientId, targetClientId, StringComparison.Ordinal))
-            {
-                continue;
-            }
-
             var replay = cachedCharacter with
             {
                 TargetClientId = targetClientId,
@@ -302,6 +302,16 @@ public sealed class BrokerBackedNetService
             };
             _log?.Invoke($"Broker replay outbound: sessionId={replay.SessionId} source={replay.SourceClientId} target={replay.TargetClientId ?? "broadcast"} messageType={replay.MessageType} sequence={replay.Sequence}.");
             await _transport.SendEnvelopeAsync(replay, cancellationToken).ConfigureAwait(false);
+        }
+    }
+
+    private BrokerEnvelope[] GetReplayableLobbyCharacters(string targetClientId)
+    {
+        lock (_latestLobbyCharacterGate)
+        {
+            return _latestLobbyCharacterBySourceClientId.Values
+                .Where(cachedCharacter => !string.Equals(cachedCharacter.SourceClientId, targetClientId, StringComparison.Ordinal))
+                .ToArray();
         }
     }
 
