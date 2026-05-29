@@ -25,6 +25,7 @@ public sealed class BrokerModeSettingsTests
         File.WriteAllText(Path.Combine(modDirectory, BrokerModeSettings.MarkerFileName), """
             role=client
             clientIndex=2
+            controllerDevice=2
             endpoint=127.0.0.1:38989
             sessionId=local-test
             """);
@@ -35,6 +36,8 @@ public sealed class BrokerModeSettingsTests
         Assert.AreEqual(BrokerClientRole.Client, settings.Config?.Role);
         Assert.AreEqual("client-2", settings.ClientId);
         Assert.AreEqual(Path.Combine(modDirectory, "localcoop-client-2-events.txt"), settings.EventLogPath);
+        Assert.IsTrue(settings.Config?.ControllerDevice.IsConfigured);
+        Assert.AreEqual(2, settings.Config?.ControllerDevice.Device);
     }
 
     [TestMethod]

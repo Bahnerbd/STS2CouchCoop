@@ -41,6 +41,7 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
                     ConfigContent: FormatConfig(
                         role: index == 0 ? "host" : "client",
                         clientIndex: index,
+                        controllerDevice: index,
                         brokerHost,
                         brokerPort,
                         sessionId)))
@@ -50,6 +51,7 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
     private static string FormatConfig(
         string role,
         int clientIndex,
+        int controllerDevice,
         string brokerHost,
         int brokerPort,
         string sessionId)
@@ -58,6 +60,7 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
             Environment.NewLine,
             $"role={role}",
             $"clientIndex={clientIndex}",
+            $"controllerDevice={controllerDevice}",
             $"endpoint={brokerHost}:{brokerPort}",
             $"sessionId={sessionId}",
             string.Empty);

@@ -28,6 +28,9 @@ public sealed class LocalCoopPatchInstallerTests
         CollectionAssert.Contains(
             LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
             typeof(LocalCoop.Mod.Patches.CharacterSelectInputDiagnosticsPatches));
+        CollectionAssert.Contains(
+            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
+            typeof(LocalCoop.Mod.Patches.ControllerInputOwnershipPatches));
     }
 
     [TestMethod]

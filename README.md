@@ -14,8 +14,8 @@ hold/paneling-ui-wip-20260525
 - `LocalCoop.Protocol` also includes a reusable TCP client connection helper that registers with the broker and reads/writes envelopes.
 - `LocalCoop.Broker` tracks registered clients, acknowledges registration, and routes direct or broadcast envelopes without understanding gameplay.
 - `LocalCoop.Broker.Cli` starts a loopback TCP broker.
-- `LocalCoop.MultiClientHarness` creates deterministic four-client broker config text, writes per-client config folders, and can run a non-game four-client broker smoke.
-- `LocalCoop.Mod` reads `enable-local-broker.txt` from `LOCALCOOP_CONFIG_DIR` or the mod directory, derives the per-process client id and log path, initializes through the STS2 mod loader, runs a focused transport seam probe, and logs lobby/net-service diagnostics.
+- `LocalCoop.MultiClientHarness` creates deterministic broker config text, writes per-client config folders, assigns controller devices by client index by default, and can run a non-game four-client broker smoke.
+- `LocalCoop.Mod` reads `enable-local-broker.txt` from `LOCALCOOP_CONFIG_DIR` or the mod directory, derives the per-process client id and log path, initializes through the STS2 mod loader, runs a focused transport seam probe, applies optional controller input ownership, and logs lobby/net-service diagnostics.
 - `LocalCoop.Mod` includes a broker-backed net-service adapter for typed lobby message registration, send, and main-thread dispatch. It is substituted into the STS2 character-select host/client lifecycle in broker mode.
 
 ## Architecture Principles
@@ -36,9 +36,19 @@ dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-two-client .l
 dotnet run --project src\LocalCoop.Broker.Cli -- local-test 38989
 ```
 
-## Next Slice
+## Broker Config
 
-The next implementation should decouple host identity from `client-0` and use runtime host registration from the STS2 host lifecycle. Start with two-client lobby correctness before attempting four clients or combat.
+`enable-local-broker.txt` supports these keys:
+
+```text
+role=host|client
+clientIndex=0..3
+controllerDevice=0..3|none
+endpoint=127.0.0.1:<port>
+sessionId=<id>
+```
+
+`controllerDevice` is optional for compatibility. When present, that STS2 process accepts only matching joypad/controller input. Use `controllerDevice=none` for keyboard-only processes.
 
 ## Manual Two-Client Smoke
 

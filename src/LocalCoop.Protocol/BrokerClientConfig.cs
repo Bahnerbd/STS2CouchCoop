@@ -5,7 +5,8 @@ public sealed record BrokerClientConfig(
     int ClientIndex,
     string Host,
     int Port,
-    string SessionId)
+    string SessionId,
+    BrokerControllerDeviceAssignment ControllerDevice = default)
 {
     public static BrokerClientConfig Parse(string content)
     {
@@ -14,13 +15,16 @@ public sealed record BrokerClientConfig(
         var clientIndex = ParseClientIndex(Require(values, "clientIndex"));
         var (host, port) = ParseEndpoint(Require(values, "endpoint"));
         var sessionId = Require(values, "sessionId");
+        var controllerDevice = values.TryGetValue("controllerDevice", out var controllerDeviceValue)
+            ? ParseControllerDevice(controllerDeviceValue)
+            : default;
 
         if (string.IsNullOrWhiteSpace(sessionId))
         {
             throw new FormatException("sessionId must not be blank.");
         }
 
-        return new BrokerClientConfig(role, clientIndex, host, port, sessionId);
+        return new BrokerClientConfig(role, clientIndex, host, port, sessionId, controllerDevice);
     }
 
     private static Dictionary<string, string> ParseKeyValues(string content)
@@ -93,5 +97,20 @@ public sealed record BrokerClientConfig(
         }
 
         return (host, port);
+    }
+
+    private static BrokerControllerDeviceAssignment ParseControllerDevice(string value)
+    {
+        if (string.Equals(value, "none", StringComparison.OrdinalIgnoreCase))
+        {
+            return BrokerControllerDeviceAssignment.None;
+        }
+
+        if (!int.TryParse(value, out var device) || device is < 0 or > 3)
+        {
+            throw new FormatException("controllerDevice must be none or an integer from 0 through 3.");
+        }
+
+        return BrokerControllerDeviceAssignment.ForDevice(device);
     }
 }

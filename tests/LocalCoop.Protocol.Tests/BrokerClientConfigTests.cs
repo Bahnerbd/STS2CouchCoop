@@ -63,4 +63,62 @@ public sealed class BrokerClientConfigTests
         Assert.AreEqual(BrokerClientRole.Host, config.Role);
         Assert.AreEqual(2, config.ClientIndex);
     }
+
+    [TestMethod]
+    public void ParsesAssignedControllerDevice()
+    {
+        var config = BrokerClientConfig.Parse("""
+            role=client
+            clientIndex=1
+            controllerDevice=1
+            endpoint=127.0.0.1:38989
+            sessionId=local-test
+            """);
+
+        Assert.IsTrue(config.ControllerDevice.IsConfigured);
+        Assert.AreEqual(1, config.ControllerDevice.Device);
+    }
+
+    [TestMethod]
+    public void ParsesDisabledControllerDevice()
+    {
+        var config = BrokerClientConfig.Parse("""
+            role=client
+            clientIndex=1
+            controllerDevice=none
+            endpoint=127.0.0.1:38989
+            sessionId=local-test
+            """);
+
+        Assert.IsTrue(config.ControllerDevice.IsConfigured);
+        Assert.IsNull(config.ControllerDevice.Device);
+    }
+
+    [TestMethod]
+    public void DefaultsControllerDeviceToUnconfiguredWhenKeyIsAbsent()
+    {
+        var config = BrokerClientConfig.Parse("""
+            role=client
+            clientIndex=1
+            endpoint=127.0.0.1:38989
+            sessionId=local-test
+            """);
+
+        Assert.IsFalse(config.ControllerDevice.IsConfigured);
+        Assert.IsNull(config.ControllerDevice.Device);
+    }
+
+    [TestMethod]
+    public void RejectsControllerDeviceOutsideFourLocalClients()
+    {
+        var exception = Assert.ThrowsException<FormatException>(() => BrokerClientConfig.Parse("""
+            role=client
+            clientIndex=1
+            controllerDevice=4
+            endpoint=127.0.0.1:38989
+            sessionId=local-test
+            """));
+
+        StringAssert.Contains(exception.Message, "controllerDevice");
+    }
 }

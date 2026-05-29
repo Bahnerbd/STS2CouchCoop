@@ -22,6 +22,8 @@ public sealed class ClientLaunchPlanTests
         Assert.AreEqual(BrokerClientRole.Host, parsed[0].Role);
         Assert.IsTrue(parsed.Skip(1).All(config => config.Role == BrokerClientRole.Client));
         CollectionAssert.AreEqual(new[] { 0, 1, 2, 3 }, parsed.Select(config => config.ClientIndex).ToArray());
+        CollectionAssert.AreEqual(new int?[] { 0, 1, 2, 3 }, parsed.Select(config => config.ControllerDevice.Device).ToArray());
+        Assert.IsTrue(parsed.All(config => config.ControllerDevice.IsConfigured));
         Assert.IsTrue(parsed.All(config => config.SessionId == "local-test"));
         Assert.IsTrue(parsed.All(config => config.Port == 38989));
     }
@@ -41,5 +43,6 @@ public sealed class ClientLaunchPlanTests
         Assert.AreEqual(BrokerClientRole.Host, parsed[0].Role);
         Assert.AreEqual(BrokerClientRole.Client, parsed[1].Role);
         CollectionAssert.AreEqual(new[] { 0, 1 }, parsed.Select(config => config.ClientIndex).ToArray());
+        CollectionAssert.AreEqual(new int?[] { 0, 1 }, parsed.Select(config => config.ControllerDevice.Device).ToArray());
     }
 }
