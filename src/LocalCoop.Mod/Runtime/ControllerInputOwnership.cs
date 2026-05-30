@@ -9,7 +9,8 @@ public static class ControllerInputOwnership
 
     public static ControllerInputOwnershipResult ShouldProcess(
         object? inputEvent,
-        BrokerControllerDeviceAssignment assignment)
+        BrokerControllerDeviceAssignment assignment,
+        bool trustAsSelectedControllerInput = false)
     {
         if (!assignment.IsConfigured)
         {
@@ -36,6 +37,15 @@ public static class ControllerInputOwnership
                 IsControllerInput: true,
                 Device: device,
                 Reason: "controllerDevice=none");
+        }
+
+        if (trustAsSelectedControllerInput)
+        {
+            return new ControllerInputOwnershipResult(
+                ShouldProcess: true,
+                IsControllerInput: true,
+                Device: device,
+                Reason: $"selected Steam controller for controllerDevice={assignment.Device.Value}");
         }
 
         if (device == assignment.Device.Value)

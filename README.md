@@ -48,7 +48,7 @@ endpoint=127.0.0.1:<port>
 sessionId=<id>
 ```
 
-`controllerDevice` is optional for compatibility. When present, that STS2 process accepts only matching joypad/controller input. Use `controllerDevice=none` for keyboard-only processes.
+`controllerDevice` is optional for compatibility. When present, STS2's Steam controller strategy is steered to the matching connected-controller ordinal for that process, and raw joypad/controller input from other devices is suppressed. Use `controllerDevice=none` for keyboard-only processes.
 
 ## Manual Two-Client Smoke
 

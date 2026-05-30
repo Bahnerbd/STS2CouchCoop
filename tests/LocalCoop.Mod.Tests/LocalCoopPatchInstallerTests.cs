@@ -31,6 +31,9 @@ public sealed class LocalCoopPatchInstallerTests
         CollectionAssert.Contains(
             LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
             typeof(LocalCoop.Mod.Patches.ControllerInputOwnershipPatches));
+        CollectionAssert.Contains(
+            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
+            typeof(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches));
     }
 
     [TestMethod]
