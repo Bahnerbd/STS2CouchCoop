@@ -471,6 +471,37 @@ function Start-LocalCoopClientProcess {
     $process
 }
 
+function Clear-LocalCoopLaunchLogs {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GameRoot
+    )
+
+    $modDirectory = Join-Path $GameRoot 'mods\LocalCoop'
+    if (-not (Test-Path -LiteralPath $modDirectory)) {
+        return
+    }
+
+    $logPatterns = @(
+        'localcoop-events.txt',
+        'localcoop-*-events.txt',
+        'localcoop-probe.txt',
+        'localcoop-transport-probe-*.txt'
+    )
+
+    foreach ($pattern in $logPatterns) {
+        foreach ($logFile in Get-ChildItem -LiteralPath $modDirectory -Filter $pattern -File -ErrorAction SilentlyContinue) {
+            try {
+                Remove-Item -LiteralPath $logFile.FullName -Force
+            }
+            catch {
+                Write-Warning ("Could not clear LocalCoop log {0}: {1}" -f $logFile.FullName, $_.Exception.Message)
+            }
+        }
+    }
+}
+
 function Invoke-LocalCoopTwoClientStartup {
     [CmdletBinding()]
     param(
@@ -546,6 +577,8 @@ function Invoke-LocalCoopTwoClientStartup {
 
         return
     }
+
+    Clear-LocalCoopLaunchLogs -GameRoot $GameRoot
 
     $clientDirectories = @(
         Join-Path $ConfigRoot 'client-0'

@@ -142,7 +142,43 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
-    public void NormalizeBeginRunMessagePutsLocalPlayerFirst()
+    public void InboundBeginRunMessagePreservesHostPlayerOrder()
+    {
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-1",
+            clientIndex: 1,
+            transport: new CapturingTransport(),
+            role: Runtime.BrokerClientRole.Client);
+        var message = new LobbyBeginRunMessage
+        {
+            playersInLobby =
+            [
+                new LobbyPlayer
+                {
+                    id = BrokerPlayerId.ForClientIndex(0),
+                    slotId = 0
+                },
+                new LobbyPlayer
+                {
+                    id = BrokerPlayerId.ForClientIndex(1),
+                    slotId = 1
+                }
+            ]
+        };
+
+        InspectInboundBeginRunPlayerOrder(service, message);
+
+        var players = message.playersInLobby;
+        Assert.IsNotNull(players);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), players[0].id);
+        Assert.AreEqual(0, players[0].slotId);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), players[1].id);
+        Assert.AreEqual(1, players[1].slotId);
+    }
+
+    [TestMethod]
+    public void InboundBeginRunMessagePreservesRuntimeHostOrderWhenClientZeroIsLocal()
     {
         var service = new BrokerBackedNetService(
             sessionId: "local-test",
@@ -167,14 +203,14 @@ public sealed class BrokerBackedNetServiceTests
             ]
         };
 
-        NormalizeInboundMessageForLocalClient(service, message);
+        InspectInboundBeginRunPlayerOrder(service, message);
 
         var players = message.playersInLobby;
         Assert.IsNotNull(players);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), players[0].id);
-        Assert.AreEqual(1, players[0].slotId);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), players[1].id);
-        Assert.AreEqual(0, players[1].slotId);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), players[0].id);
+        Assert.AreEqual(0, players[0].slotId);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), players[1].id);
+        Assert.AreEqual(1, players[1].slotId);
     }
 
     [TestMethod]
@@ -950,11 +986,11 @@ public sealed class BrokerBackedNetServiceTests
         return suppressed;
     }
 
-    private static void NormalizeInboundMessageForLocalClient(BrokerBackedNetService service, object message)
+    private static void InspectInboundBeginRunPlayerOrder(BrokerBackedNetService service, object message)
     {
         var method = typeof(BrokerBackedNetService)
-            .GetMethod("NormalizeInboundMessageForLocalClient", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingMethodException(nameof(BrokerBackedNetService), "NormalizeInboundMessageForLocalClient");
+            .GetMethod("InspectInboundBeginRunPlayerOrder", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(nameof(BrokerBackedNetService), "InspectInboundBeginRunPlayerOrder");
         method.Invoke(service, [message]);
     }
 

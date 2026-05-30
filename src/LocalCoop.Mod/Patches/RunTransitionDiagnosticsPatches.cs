@@ -152,12 +152,18 @@ public static class RunTransitionTaskDiagnosticsPatches
         ("MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen", "StartNewMultiplayerRun"),
         ("MegaCrit.Sts2.Core.Nodes.NGame", "StartNewMultiplayerRun"),
         ("MegaCrit.Sts2.Core.Nodes.NGame", "StartRun"),
+        ("MegaCrit.Sts2.Core.Nodes.NGame", "ReturnToMainMenu"),
+        ("MegaCrit.Sts2.Core.Nodes.NGame", "GoToTimeline"),
         ("MegaCrit.Sts2.Core.Runs.RunManager", "FinalizeStartingRelics"),
         ("MegaCrit.Sts2.Core.Runs.RunManager", "GenerateMap"),
         ("MegaCrit.Sts2.Core.Runs.RunManager", "EnterAct"),
         ("MegaCrit.Sts2.Core.Runs.RunManager", "SetActInternal"),
-        ("MegaCrit.Sts2.Core.Runs.RunManager", "FadeIn")
+        ("MegaCrit.Sts2.Core.Runs.RunManager", "FadeIn"),
+        ("MegaCrit.Sts2.Core.Runs.RunManager", "ReturnToMainMenuWithError"),
+        ("MegaCrit.Sts2.Core.Runs.RunManager", "AbandonInternal")
     ];
+
+    public static IReadOnlyList<(string TypeName, string MethodName)> TargetSignaturesForTesting => Targets;
 
     public static IEnumerable<MethodBase> TargetMethods()
     {
@@ -207,12 +213,23 @@ public static class RunTransitionVoidDiagnosticsPatches
         ("MegaCrit.Sts2.Core.Runs.RunManager", "InitializeRunLobby"),
         ("MegaCrit.Sts2.Core.Runs.RunManager", "InitializeNewRun"),
         ("MegaCrit.Sts2.Core.Runs.RunManager", "GenerateRooms"),
+        ("MegaCrit.Sts2.Core.Runs.RunManager", "CleanUp"),
+        ("MegaCrit.Sts2.Core.Runs.RunManager", "StateDiverged"),
+        ("MegaCrit.Sts2.Core.Runs.RunManager", "LocalPlayerDisconnected"),
+        ("MegaCrit.Sts2.Core.Runs.RunManager", "RemotePlayerDisconnected"),
+        ("MegaCrit.Sts2.Core.Runs.RunManager", "ReturnToMainMenuWithError"),
+        ("MegaCrit.Sts2.Core.Runs.RunManager", "Abandon"),
+        ("MegaCrit.Sts2.Core.Runs.RunManager", "AbandonInternal"),
         ("MegaCrit.Sts2.Core.Nodes.NSceneContainer", "SetCurrentScene"),
         ("MegaCrit.Sts2.Core.Nodes.NRun", "_Ready"),
+        ("MegaCrit.Sts2.Core.Nodes.NRun", "_Notification"),
         ("MegaCrit.Sts2.Core.Nodes.Rooms.NMapRoom", "_Ready"),
         ("MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen", "_Ready"),
-        ("MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen", "Initialize")
+        ("MegaCrit.Sts2.Core.Nodes.Screens.Map.NMapScreen", "Initialize"),
+        ("MegaCrit.Sts2.Core.Multiplayer.Game.ChecksumTracker", "LogStateDivergence")
     ];
+
+    public static IReadOnlyList<(string TypeName, string MethodName)> TargetSignaturesForTesting => Targets;
 
     public static IEnumerable<MethodBase> TargetMethods()
     {

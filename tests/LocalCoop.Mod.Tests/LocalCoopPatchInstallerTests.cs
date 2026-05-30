@@ -40,6 +40,9 @@ public sealed class LocalCoopPatchInstallerTests
         CollectionAssert.Contains(
             LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
             typeof(LocalCoop.Mod.Patches.RunTransitionVoidDiagnosticsPatches));
+        CollectionAssert.Contains(
+            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
+            typeof(LocalCoop.Mod.Patches.PlayerChoiceDiagnosticsPatches));
     }
 
     [TestMethod]

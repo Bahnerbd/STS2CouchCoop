@@ -19,6 +19,7 @@ public static class LocalCoopPatchInstaller
         typeof(LobbyLifecycleDiagnosticsPatches),
         typeof(RunTransitionTaskDiagnosticsPatches),
         typeof(RunTransitionVoidDiagnosticsPatches),
+        typeof(PlayerChoiceDiagnosticsPatches),
         typeof(NetServiceDiagnosticsPatches)
     ];
 

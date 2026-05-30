@@ -104,6 +104,42 @@ try {
         throw "Expected broker launcher script to exist at $launcherScript."
     }
 
+    $gameRoot = Join-Path $tempRoot 'game'
+    $modDirectory = Join-Path $gameRoot 'mods\LocalCoop'
+    New-Item -ItemType Directory -Path $modDirectory -Force | Out-Null
+    $ownedLogFiles = @(
+        'localcoop-events.txt',
+        'localcoop-host-0-events.txt',
+        'localcoop-client-1-events.txt',
+        'localcoop-probe.txt',
+        'localcoop-transport-probe-client-0.txt',
+        'localcoop-transport-probe-client-1.txt'
+    )
+
+    foreach ($fileName in $ownedLogFiles) {
+        Set-Content -LiteralPath (Join-Path $modDirectory $fileName) -Value 'old log data'
+    }
+
+    $preservedFiles = @(
+        'enable-local-broker.txt',
+        'LocalCoop.dll',
+        'notes.txt'
+    )
+
+    foreach ($fileName in $preservedFiles) {
+        Set-Content -LiteralPath (Join-Path $modDirectory $fileName) -Value 'keep me'
+    }
+
+    Clear-LocalCoopLaunchLogs -GameRoot $gameRoot
+
+    foreach ($fileName in $ownedLogFiles) {
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $modDirectory $fileName))) "Launch cleanup should remove $fileName."
+    }
+
+    foreach ($fileName in $preservedFiles) {
+        Assert-True (Test-Path -LiteralPath (Join-Path $modDirectory $fileName)) "Launch cleanup should preserve $fileName."
+    }
+
     $sleepProcess = Start-Process `
         -FilePath 'powershell.exe' `
         -ArgumentList @('-NoProfile', '-Command', 'Start-Sleep -Seconds 60') `

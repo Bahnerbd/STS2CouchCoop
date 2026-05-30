@@ -303,7 +303,7 @@ public sealed class BrokerBackedNetService
             var parameters = handler.Method.GetParameters();
             var parameterType = parameters[0].ParameterType;
             var message = BrokerEnvelopeMessageSerializer.Deserialize(envelope, parameterType);
-            NormalizeInboundMessageForLocalClient(message);
+            InspectInboundBeginRunPlayerOrder(message);
             if (parameters.Length == 1)
             {
                 InvokeHandler(handler, message);
@@ -442,7 +442,7 @@ public sealed class BrokerBackedNetService
             StringComparison.Ordinal);
     }
 
-    private void NormalizeInboundMessageForLocalClient(object message)
+    private void InspectInboundBeginRunPlayerOrder(object message)
     {
         if (!string.Equals(
             message.GetType().FullName,
@@ -475,9 +475,7 @@ public sealed class BrokerBackedNetService
                 return;
             }
 
-            players.RemoveAt(index);
-            players.Insert(0, player);
-            _log?.Invoke($"Broker normalized inbound begin run player order: sessionId={_sessionId} client={_clientId} localNetId={NetId} originalIndex={index}.");
+            _log?.Invoke($"Broker preserved inbound begin run player order: sessionId={_sessionId} client={_clientId} localNetId={NetId} localIndex={index}.");
             return;
         }
     }
