@@ -137,6 +137,35 @@ public sealed class BrokerClientJoinFlowTests
         Assert.IsTrue(messages.Any(message => message.Contains("popped join screen", StringComparison.Ordinal)));
     }
 
+    [TestMethod]
+    public void TryTriggerBrokerJoinFromOpenedJoinScreenInvokesJoinAndHidesScreenWhenBrokerEnabled()
+    {
+        var screen = new FakeOpenedJoinScreen();
+        var messages = new List<string>();
+
+        var triggered = BrokerClientJoinFlow.TryTriggerBrokerJoinFromOpenedJoinScreen(screen, Settings(BrokerClientRole.Client), messages.Add);
+
+        Assert.IsTrue(triggered);
+        Assert.AreEqual(1, screen.JoinGameCount);
+        Assert.IsInstanceOfType<BrokerClientJoinFlow.PlaceholderClientConnectionInitializer>(screen.LastInitializer);
+        Assert.IsFalse(screen.VisibleState);
+        Assert.IsTrue(messages.Any(message => message.Contains("triggering broker client join", StringComparison.Ordinal)));
+        Assert.IsTrue(messages.Any(message => message.Contains("hiding join screen", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void TryTriggerBrokerJoinFromOpenedJoinScreenDoesNothingWhenBrokerDisabled()
+    {
+        var screen = new FakeOpenedJoinScreen();
+        var settings = new BrokerModeSettings(false, null, "client-1", "events.txt", null);
+
+        var triggered = BrokerClientJoinFlow.TryTriggerBrokerJoinFromOpenedJoinScreen(screen, settings, _ => { });
+
+        Assert.IsFalse(triggered);
+        Assert.AreEqual(0, screen.JoinGameCount);
+        Assert.IsTrue(screen.VisibleState);
+    }
+
     private static BrokerModeSettings Settings(BrokerClientRole role)
     {
         return new BrokerModeSettings(
@@ -188,6 +217,26 @@ public sealed class BrokerClientJoinFlowTests
         public void Pop()
         {
             PopCount++;
+        }
+    }
+
+    private sealed class FakeOpenedJoinScreen
+    {
+        public int JoinGameCount { get; private set; }
+
+        public object? LastInitializer { get; private set; }
+
+        public bool VisibleState { get; private set; } = true;
+
+        public void JoinGame(object initializer)
+        {
+            JoinGameCount++;
+            LastInitializer = initializer;
+        }
+
+        public void set_Visible(bool visible)
+        {
+            VisibleState = visible;
         }
     }
 }

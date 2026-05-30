@@ -37,6 +37,18 @@ public sealed class LocalCoopPatchInstallerTests
     }
 
     [TestMethod]
+    public void BrokerJoinFriendScreenPatchTargetsJoinFriendsPressedAfterSubmenuPush()
+    {
+        var target = LocalCoop.Mod.Patches.BrokerJoinFriendScreenPatch.TargetMethod();
+
+        Assert.IsNotNull(target);
+        Assert.AreEqual("OnJoinFriendsPressed", target!.Name);
+        Assert.AreEqual(
+            "MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NMultiplayerSubmenu",
+            target.DeclaringType?.FullName);
+    }
+
+    [TestMethod]
     public void InstallLogsPatchFailuresWithoutThrowing()
     {
         var messages = new List<string>();

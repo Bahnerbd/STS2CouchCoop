@@ -137,6 +137,44 @@ public static class BrokerClientJoinFlow
         return CreateJoinRequest(maxAscensionUnlocked, unlockState);
     }
 
+    public static bool TryTriggerBrokerJoinFromOpenedJoinScreen(
+        object? screen,
+        BrokerModeSettings settings,
+        Action<string>? log)
+    {
+        if (!ShouldUseBrokerJoin(settings))
+        {
+            return false;
+        }
+
+        if (screen is null)
+        {
+            log?.Invoke("Broker join friend screen: opened join screen unavailable; broker join not triggered.");
+            return false;
+        }
+
+        try
+        {
+            log?.Invoke("Broker join friend screen: triggering broker client join.");
+            var joinGame = screen.GetType()
+                .GetMethod("JoinGame", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+            if (joinGame is null)
+            {
+                log?.Invoke("Broker join friend screen: JoinGame method unavailable; broker join not triggered.");
+                return false;
+            }
+
+            joinGame.Invoke(screen, [new PlaceholderClientConnectionInitializer()]);
+            TryHideJoinScreen(screen, log);
+            return true;
+        }
+        catch (Exception exception)
+        {
+            log?.Invoke($"Broker join friend screen: failed to trigger broker join: {exception.GetType().Name}: {exception.Message}");
+            return false;
+        }
+    }
+
     public static void TryHideJoinScreen(object screen, Action<string>? log)
     {
         try
