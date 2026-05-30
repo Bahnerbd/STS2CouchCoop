@@ -186,6 +186,21 @@ public sealed class SteamControllerInputSelectionTests
         Assert.IsNull(uiCompanionInputEvent);
     }
 
+    [TestMethod]
+    public void ConsumesGeneratedOriginalSteamControllerMotionByShapeForSinkClone()
+    {
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        SteamControllerInputSelection.RegisterGeneratedOriginalSteamControllerInput(
+            new FakeInputEventJoypadMotion(device: 0, axis: 1));
+
+        Assert.IsTrue(SteamControllerInputSelection.TryConsumeGeneratedOriginalSteamControllerInput(
+            new FakeInputEventJoypadMotion(device: 0, axis: 1)));
+        Assert.IsFalse(SteamControllerInputSelection.TryConsumeGeneratedOriginalSteamControllerInput(
+            new FakeInputEventJoypadMotion(device: 0, axis: 1)));
+        Assert.IsFalse(SteamControllerInputSelection.TryConsumeGeneratedOriginalSteamControllerInput(
+            new FakeInputEventJoypadMotion(device: 0, axis: 0)));
+    }
+
     private sealed class FakeInputEventAction(string action, int device, bool pressed = true)
     {
         public string Action { get; set; } = action;
@@ -196,5 +211,11 @@ public sealed class SteamControllerInputSelectionTests
         {
             return new FakeInputEventAction(Action, Device, Pressed);
         }
+    }
+
+    private sealed class FakeInputEventJoypadMotion(int device, int axis)
+    {
+        public int Device { get; } = device;
+        public int Axis { get; } = axis;
     }
 }

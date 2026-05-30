@@ -69,7 +69,29 @@ public static class ControllerInputOwnershipPatches
         if (isSelectedSteamControllerBoundary)
         {
             SteamControllerInputSelection.RegisterGeneratedUiCompanionAction(inputEvent);
-            SteamControllerInputSelection.TryDispatchUiCompanionInputEvent(inputEvent);
+            var companionDispatched = SteamControllerInputSelection.TryDispatchUiCompanionInputEvent(inputEvent);
+            LogSelectedSteamControllerBoundary(
+                settings,
+                inputEvent,
+                companionDispatched,
+                __instance,
+                __originalMethod);
+        }
+
+        var isSelectedOriginalSteamControllerBoundary = ShouldTrustSelectedOriginalSteamControllerBoundary(
+            typeName,
+            methodName,
+            inputEvent,
+            settings.Config.ControllerDevice,
+            isGeneratedSteamInput);
+        if (isSelectedOriginalSteamControllerBoundary)
+        {
+            SteamControllerInputSelection.RegisterGeneratedOriginalSteamControllerInput(inputEvent);
+            LogSelectedOriginalSteamControllerBoundary(
+                settings,
+                inputEvent,
+                __instance,
+                __originalMethod);
         }
 
         if (IsControllerManagerObserver(typeName, methodName))
@@ -89,7 +111,11 @@ public static class ControllerInputOwnershipPatches
                 Reason = "native controllerDevice=0 ignores generated Steam input"
             };
             new BrokerEventLog(settings.EventLogPath).Write(
-                $"{ControllerInputOwnership.FormatLogLine(duplicateResult, inputEvent)} method={__instance.GetType().Name}.{__originalMethod.Name}");
+                FormatControllerOwnershipLogLine(
+                    duplicateResult,
+                    inputEvent,
+                    __instance.GetType().Name,
+                    __originalMethod.Name));
             return false;
         }
 
@@ -111,18 +137,24 @@ public static class ControllerInputOwnershipPatches
                 Reason = "bridged selected Steam controller action to ui companion"
             };
             new BrokerEventLog(settings.EventLogPath).Write(
-                $"{ControllerInputOwnership.FormatLogLine(bridgedResult, inputEvent)} method={__instance.GetType().Name}.{__originalMethod.Name}");
+                FormatControllerOwnershipLogLine(
+                    bridgedResult,
+                    inputEvent,
+                    __instance.GetType().Name,
+                    __originalMethod.Name));
             return false;
         }
 
         var isGeneratedUiCompanionInput = ShouldConsumeGeneratedUiCompanionAtSink(typeName, methodName)
             && SteamControllerInputSelection.TryConsumeGeneratedUiCompanionInputEvent(inputEvent);
+        var isGeneratedOriginalSteamInput = ShouldConsumeGeneratedOriginalSteamInputAtSink(typeName, methodName)
+            && SteamControllerInputSelection.TryConsumeGeneratedOriginalSteamControllerInput(inputEvent);
         var isSelectedSteamInput = ShouldTrustSelectedSteamInputAtSink(
             typeName,
             methodName,
             inputEvent,
             settings.Config.ControllerDevice,
-            isGeneratedSteamInput);
+            isGeneratedSteamInput || isGeneratedOriginalSteamInput);
 
         var result = ControllerInputOwnership.ShouldProcess(
             inputEvent,
@@ -135,14 +167,36 @@ public static class ControllerInputOwnershipPatches
 
         if (result.ShouldProcess)
         {
-            LogAllowedIfUseful(settings, inputEvent, result);
+            LogAllowedIfUseful(
+                settings,
+                inputEvent,
+                result,
+                __instance,
+                __originalMethod,
+                isGeneratedOriginalSteamInput,
+                isGeneratedOriginalSteamInput ? "generatedOriginalSteamInput=True" : null);
             return true;
         }
 
         MarkInputHandled(__instance, inputEvent);
         new BrokerEventLog(settings.EventLogPath).Write(
-            $"{ControllerInputOwnership.FormatLogLine(result, inputEvent)} method={__instance.GetType().Name}.{__originalMethod.Name}");
+            FormatControllerOwnershipLogLine(
+                result,
+                inputEvent,
+                __instance.GetType().Name,
+                __originalMethod.Name,
+                $"generatedSteamInput={isGeneratedSteamInput} generatedOriginalSteamInput={isGeneratedOriginalSteamInput}"));
         return false;
+    }
+
+    public static string FormatControllerOwnershipLogLineForTesting(
+        ControllerInputOwnershipResult result,
+        object? inputEvent,
+        string typeName,
+        string methodName,
+        string? suffix = null)
+    {
+        return FormatControllerOwnershipLogLine(result, inputEvent, typeName, methodName, suffix);
     }
 
     public static bool ShouldTrustSelectedSteamControllerBoundaryForTesting(
@@ -153,6 +207,21 @@ public static class ControllerInputOwnershipPatches
         bool selectedSteamInput)
     {
         return ShouldTrustSelectedSteamControllerBoundary(typeName, methodName, inputEvent, assignment, selectedSteamInput);
+    }
+
+    public static bool ShouldTrustSelectedOriginalSteamControllerBoundaryForTesting(
+        string typeName,
+        string methodName,
+        object? inputEvent,
+        BrokerControllerDeviceAssignment assignment,
+        bool selectedSteamInput)
+    {
+        return ShouldTrustSelectedOriginalSteamControllerBoundary(
+            typeName,
+            methodName,
+            inputEvent,
+            assignment,
+            selectedSteamInput);
     }
 
     public static bool ShouldConsumeGeneratedUiCompanionAtSinkForTesting(
@@ -208,6 +277,19 @@ public static class ControllerInputOwnershipPatches
             && SteamControllerInputSelection.CanMapUiCompanionAction(inputEvent);
     }
 
+    private static bool ShouldTrustSelectedOriginalSteamControllerBoundary(
+        string typeName,
+        string methodName,
+        object? inputEvent,
+        BrokerControllerDeviceAssignment assignment,
+        bool selectedSteamInput)
+    {
+        return selectedSteamInput
+            && IsAssignedSelectedSteamDevice(assignment)
+            && IsControllerManagerObserver(typeName, methodName)
+            && SteamControllerInputSelection.CanTrustOriginalSteamControllerInput(inputEvent);
+    }
+
     private static bool ShouldConsumeGeneratedUiCompanionAtSink(
         string typeName,
         string methodName)
@@ -219,6 +301,13 @@ public static class ControllerInputOwnershipPatches
                     || typeName.EndsWith(".NInputManager", StringComparison.Ordinal)));
     }
 
+    private static bool ShouldConsumeGeneratedOriginalSteamInputAtSink(
+        string typeName,
+        string methodName)
+    {
+        return IsRealInputSink(typeName, methodName);
+    }
+
     private static bool ShouldTrustSelectedSteamInputAtSink(
         string typeName,
         string methodName,
@@ -226,7 +315,10 @@ public static class ControllerInputOwnershipPatches
         BrokerControllerDeviceAssignment assignment,
         bool selectedSteamInput)
     {
-        return false;
+        return selectedSteamInput
+            && IsAssignedSelectedSteamDevice(assignment)
+            && IsRealInputSink(typeName, methodName)
+            && SteamControllerInputSelection.CanTrustOriginalSteamControllerInput(inputEvent);
     }
 
     private static bool ShouldBridgeSelectedSteamInputAtSink(
@@ -293,18 +385,78 @@ public static class ControllerInputOwnershipPatches
             && assignment.Device is > 0;
     }
 
+    private static void LogSelectedSteamControllerBoundary(
+        BrokerModeSettings settings,
+        object? inputEvent,
+        bool companionDispatched,
+        object instance,
+        MethodBase method)
+    {
+        var result = ControllerInputOwnership.ShouldProcess(
+            inputEvent,
+            settings.Config!.ControllerDevice,
+            trustAsSelectedControllerInput: true);
+        new BrokerEventLog(settings.EventLogPath).Write(
+            FormatControllerOwnershipLogLine(
+                result,
+                inputEvent,
+                instance.GetType().Name,
+                method.Name,
+                $"boundary=selectedSteamController companionDispatched={companionDispatched}"));
+    }
+
+    private static void LogSelectedOriginalSteamControllerBoundary(
+        BrokerModeSettings settings,
+        object? inputEvent,
+        object instance,
+        MethodBase method)
+    {
+        var result = ControllerInputOwnership.ShouldProcess(
+            inputEvent,
+            settings.Config!.ControllerDevice,
+            trustAsSelectedControllerInput: true);
+        new BrokerEventLog(settings.EventLogPath).Write(
+            FormatControllerOwnershipLogLine(
+                result,
+                inputEvent,
+                instance.GetType().Name,
+                method.Name,
+                "boundary=selectedOriginalSteamController"));
+    }
+
     private static void LogAllowedIfUseful(
         BrokerModeSettings settings,
         object? inputEvent,
-        ControllerInputOwnershipResult result)
+        ControllerInputOwnershipResult result,
+        object instance,
+        MethodBase method,
+        bool includeUnpressed = false,
+        string? suffix = null)
     {
-        if (!IsPressedInput(inputEvent))
+        if (!includeUnpressed && !IsPressedInput(inputEvent))
         {
             return;
         }
 
         new BrokerEventLog(settings.EventLogPath).Write(
-            ControllerInputOwnership.FormatLogLine(result, inputEvent));
+            FormatControllerOwnershipLogLine(
+                result,
+                inputEvent,
+                instance.GetType().Name,
+                method.Name,
+                suffix));
+    }
+
+    private static string FormatControllerOwnershipLogLine(
+        ControllerInputOwnershipResult result,
+        object? inputEvent,
+        string typeName,
+        string methodName,
+        string? suffix = null)
+    {
+        var suffixText = string.IsNullOrWhiteSpace(suffix) ? string.Empty : $" {suffix}";
+        var inputType = inputEvent?.GetType().Name ?? "<none>";
+        return $"{ControllerInputOwnership.FormatLogLine(result, inputEvent)} inputType={inputType} method={typeName}.{methodName}{suffixText}";
     }
 
     private static bool IsPressedInput(object? inputEvent)

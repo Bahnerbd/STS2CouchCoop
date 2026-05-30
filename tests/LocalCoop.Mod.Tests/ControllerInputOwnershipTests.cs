@@ -128,6 +128,41 @@ public sealed class ControllerInputOwnershipTests
     }
 
     [TestMethod]
+    public void ControllerManagerObserverCanRegisterSelectedOriginalSteamMotionWithoutConsumingInput()
+    {
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldTrustSelectedOriginalSteamControllerBoundaryForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NControllerManager",
+            "_Input",
+            new FakeInputEventJoypadMotion(device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            selectedSteamInput: true));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldTrustSelectedOriginalSteamControllerBoundaryForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NControllerManager",
+            "_Input",
+            new FakeInputEventAction("controller_d_pad_south", device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            selectedSteamInput: true));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldTrustSelectedOriginalSteamControllerBoundaryForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager",
+            "_UnhandledInput",
+            new FakeInputEventJoypadMotion(device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            selectedSteamInput: true));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldTrustSelectedOriginalSteamControllerBoundaryForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NControllerManager",
+            "_Input",
+            new FakeInputEventJoypadMotion(device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(0),
+            selectedSteamInput: true));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldTrustSelectedOriginalSteamControllerBoundaryForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NControllerManager",
+            "_Input",
+            new FakeInputEventJoypadMotion(device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            selectedSteamInput: false));
+    }
+
+    [TestMethod]
     public void OnlyRealInputSinksConsumeGeneratedUiCompanions()
     {
         Assert.IsTrue(ControllerInputOwnershipPatches.ShouldConsumeGeneratedUiCompanionAtSinkForTesting(
@@ -195,6 +230,47 @@ public sealed class ControllerInputOwnershipTests
             new FakeInputEventAction("controller_d_pad_south", device: 0),
             BrokerControllerDeviceAssignment.ForDevice(0),
             selectedSteamInput: true));
+    }
+
+    [TestMethod]
+    public void RealInputSinksTrustUnmappedOriginalSelectedSteamControllerInputs()
+    {
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldTrustSelectedSteamInputAtSinkForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NHotkeyManager",
+            "_UnhandledInput",
+            new FakeInputEventAction("controller_face_button_west", device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            selectedSteamInput: true));
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldTrustSelectedSteamInputAtSinkForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager",
+            "_UnhandledInput",
+            new FakeInputEventAction("controller_face_button_north", device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            selectedSteamInput: true));
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldTrustSelectedSteamInputAtSinkForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager",
+            "_UnhandledInput",
+            new FakeInputEventJoypadMotion(device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            selectedSteamInput: true));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldTrustSelectedSteamInputAtSinkForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager",
+            "_UnhandledInput",
+            new FakeInputEventAction("ui_down", device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            selectedSteamInput: true));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldTrustSelectedSteamInputAtSinkForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager",
+            "_UnhandledInput",
+            new FakeInputEventAction("controller_face_button_west", device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(0),
+            selectedSteamInput: true));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldTrustSelectedSteamInputAtSinkForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager",
+            "_UnhandledInput",
+            new FakeInputEventAction("controller_face_button_west", device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            selectedSteamInput: false));
     }
 
     [TestMethod]
@@ -273,6 +349,29 @@ public sealed class ControllerInputOwnershipTests
             selectedSteamInput: false));
     }
 
+    [TestMethod]
+    public void ControllerOwnershipPatchLogLinesIncludeMethodAndBoundaryContext()
+    {
+        var inputEvent = new FakeInputEventAction("controller_d_pad_south", device: 0);
+        var result = ControllerInputOwnership.ShouldProcess(
+            inputEvent,
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            trustAsSelectedControllerInput: true);
+
+        var line = ControllerInputOwnershipPatches.FormatControllerOwnershipLogLineForTesting(
+            result,
+            inputEvent,
+            "NControllerManager",
+            "_Input",
+            "boundary=selectedSteamController companionDispatched=True");
+
+        StringAssert.Contains(line, "Controller input ownership: allowed device=0 action=controller_d_pad_south");
+        StringAssert.Contains(line, "reason=selected Steam controller for controllerDevice=1.");
+        StringAssert.Contains(line, "inputType=FakeInputEventAction");
+        StringAssert.Contains(line, "method=NControllerManager._Input");
+        StringAssert.Contains(line, "boundary=selectedSteamController companionDispatched=True");
+    }
+
     private sealed class FakeJoypadButton(int device)
     {
         public int Device { get; } = device;
@@ -283,6 +382,11 @@ public sealed class ControllerInputOwnershipTests
         public string Action { get; } = action;
         public int Device { get; } = device;
         public bool Pressed { get; } = pressed;
+    }
+
+    private sealed class FakeInputEventJoypadMotion(int device)
+    {
+        public int Device { get; } = device;
     }
 
     private sealed class FakeInputEventMouseButton;

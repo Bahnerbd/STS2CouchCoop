@@ -13,7 +13,9 @@ public static class SteamControllerInputSelection
     private static readonly object Lock = new();
     private static readonly HashSet<object> GeneratedInputEvents = new(ReferenceEqualityComparer.Instance);
     private static readonly HashSet<object> AcceptedUiCompanionInputEvents = new(ReferenceEqualityComparer.Instance);
+    private static readonly HashSet<object> AcceptedOriginalSteamControllerInputEvents = new(ReferenceEqualityComparer.Instance);
     private static readonly Dictionary<string, Queue<DateTimeOffset>> PendingUiCompanionActions = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, Queue<DateTimeOffset>> PendingOriginalSteamControllerInputs = new(StringComparer.Ordinal);
     private static readonly TimeSpan UiCompanionTokenLifetime = TimeSpan.FromMilliseconds(250);
     private static string? _lastSelectionSummary;
 
@@ -108,6 +110,86 @@ public static class SteamControllerInputSelection
     public static bool CanMapUiCompanionAction(object? inputEvent)
     {
         return MapSteamControllerActionToUiCompanion(GetActionName(inputEvent)) is not null;
+    }
+
+    public static bool CanTrustOriginalSteamControllerInput(object? inputEvent)
+    {
+        if (inputEvent is null || CanMapUiCompanionAction(inputEvent))
+        {
+            return false;
+        }
+
+        var action = GetActionName(inputEvent);
+        if (action is not null)
+        {
+            return action.StartsWith("controller_", StringComparison.Ordinal);
+        }
+
+        var typeName = inputEvent.GetType().FullName ?? inputEvent.GetType().Name;
+        return typeName.Contains("JoypadMotion", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static void RegisterGeneratedOriginalSteamControllerInput(object? inputEvent, DateTimeOffset? now = null)
+    {
+        var key = GetOriginalSteamControllerInputKey(inputEvent);
+        if (key is null)
+        {
+            return;
+        }
+
+        lock (Lock)
+        {
+            if (!PendingOriginalSteamControllerInputs.TryGetValue(key, out var pendingTokens))
+            {
+                pendingTokens = new Queue<DateTimeOffset>();
+                PendingOriginalSteamControllerInputs[key] = pendingTokens;
+            }
+
+            pendingTokens.Enqueue(now ?? DateTimeOffset.UtcNow);
+        }
+    }
+
+    public static bool TryConsumeGeneratedOriginalSteamControllerInput(object? inputEvent, DateTimeOffset? now = null)
+    {
+        if (inputEvent is null)
+        {
+            return false;
+        }
+
+        var key = GetOriginalSteamControllerInputKey(inputEvent);
+        if (key is null)
+        {
+            return false;
+        }
+
+        lock (Lock)
+        {
+            if (AcceptedOriginalSteamControllerInputEvents.Contains(inputEvent))
+            {
+                return true;
+            }
+
+            var currentTime = now ?? DateTimeOffset.UtcNow;
+            if (!PendingOriginalSteamControllerInputs.TryGetValue(key, out var pendingTokens))
+            {
+                return false;
+            }
+
+            PruneExpiredOriginalSteamControllerInputTokens(key, pendingTokens, currentTime);
+            if (pendingTokens.Count == 0)
+            {
+                return false;
+            }
+
+            pendingTokens.Dequeue();
+            if (pendingTokens.Count == 0)
+            {
+                PendingOriginalSteamControllerInputs.Remove(key);
+            }
+
+            AcceptedOriginalSteamControllerInputEvents.Add(inputEvent);
+            return true;
+        }
     }
 
     public static bool TryCreateUiCompanionInputEvent(object? inputEvent, out object? uiCompanionInputEvent)
@@ -232,7 +314,9 @@ public static class SteamControllerInputSelection
         {
             GeneratedInputEvents.Clear();
             AcceptedUiCompanionInputEvents.Clear();
+            AcceptedOriginalSteamControllerInputEvents.Clear();
             PendingUiCompanionActions.Clear();
+            PendingOriginalSteamControllerInputs.Clear();
             _lastSelectionSummary = null;
         }
     }
@@ -392,7 +476,9 @@ public static class SteamControllerInputSelection
         {
             GeneratedInputEvents.Clear();
             AcceptedUiCompanionInputEvents.Clear();
+            AcceptedOriginalSteamControllerInputEvents.Clear();
             PendingUiCompanionActions.Clear();
+            PendingOriginalSteamControllerInputs.Clear();
         }
     }
 
@@ -409,6 +495,59 @@ public static class SteamControllerInputSelection
         if (pendingTokens.Count == 0)
         {
             PendingUiCompanionActions.Remove(action);
+        }
+    }
+
+    private static void PruneExpiredOriginalSteamControllerInputTokens(
+        string key,
+        Queue<DateTimeOffset> pendingTokens,
+        DateTimeOffset now)
+    {
+        while (pendingTokens.Count > 0 && now - pendingTokens.Peek() > UiCompanionTokenLifetime)
+        {
+            pendingTokens.Dequeue();
+        }
+
+        if (pendingTokens.Count == 0)
+        {
+            PendingOriginalSteamControllerInputs.Remove(key);
+        }
+    }
+
+    private static string? GetOriginalSteamControllerInputKey(object? inputEvent)
+    {
+        if (inputEvent is null || !CanTrustOriginalSteamControllerInput(inputEvent))
+        {
+            return null;
+        }
+
+        var typeName = inputEvent.GetType().Name;
+        var device = GetPropertyValue(inputEvent, "Device")?.ToString() ?? "<none>";
+        var action = GetActionName(inputEvent);
+        if (action is not null)
+        {
+            var pressed = GetPropertyValue(inputEvent, "Pressed")?.ToString() ?? "<none>";
+            return $"{typeName}|device={device}|action={action}|pressed={pressed}";
+        }
+
+        var axis = GetPropertyValue(inputEvent, "Axis")?.ToString() ?? "<none>";
+        return $"{typeName}|device={device}|axis={axis}";
+    }
+
+    private static object? GetPropertyValue(object? source, string propertyName)
+    {
+        if (source is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return source.GetType().GetProperty(propertyName, Members)?.GetValue(source);
+        }
+        catch (TargetInvocationException)
+        {
+            return null;
         }
     }
 

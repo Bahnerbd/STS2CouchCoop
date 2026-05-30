@@ -17,6 +17,8 @@ public static class LocalCoopPatchInstaller
         typeof(ControllerInputOwnershipPatches),
         typeof(CharacterSelectInputDiagnosticsPatches),
         typeof(LobbyLifecycleDiagnosticsPatches),
+        typeof(RunTransitionTaskDiagnosticsPatches),
+        typeof(RunTransitionVoidDiagnosticsPatches),
         typeof(NetServiceDiagnosticsPatches)
     ];
 

@@ -1,9 +1,12 @@
+using System.Collections.Concurrent;
+
 namespace LocalCoop.Mod.Runtime;
 
 public sealed class BrokerEventLog
 {
+    private static readonly ConcurrentDictionary<string, object> LocksByPath = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly string _path;
-    private readonly object _lock = new();
 
     public BrokerEventLog(string path)
     {
@@ -12,7 +15,7 @@ public sealed class BrokerEventLog
             throw new ArgumentException("Log path must not be blank.", nameof(path));
         }
 
-        _path = path;
+        _path = Path.GetFullPath(path);
     }
 
     public void Write(string message)
@@ -23,10 +26,10 @@ public sealed class BrokerEventLog
             Directory.CreateDirectory(directory);
         }
 
-        lock (_lock)
+        var fileLock = LocksByPath.GetOrAdd(_path, static _ => new object());
+        lock (fileLock)
         {
             File.AppendAllLines(_path, [$"{DateTimeOffset.Now:O} {message}"]);
         }
     }
 }
-

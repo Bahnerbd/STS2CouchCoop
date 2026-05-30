@@ -9,6 +9,7 @@ public sealed class BrokerBackedNetService
     private readonly int _clientIndex;
     private readonly IBrokerEnvelopeTransport _transport;
     private readonly Action<string>? _log;
+    private readonly BrokerClientRole? _role;
     private readonly Dictionary<string, List<Delegate>> _handlersByMessageType = new(StringComparer.Ordinal);
     private readonly BrokerLobbyMessageCoordinator _messageCoordinator;
     private readonly Dictionary<ulong, bool> _knownPeersById = [];
@@ -33,6 +34,7 @@ public sealed class BrokerBackedNetService
         NetId = BrokerPlayerId.ForClientIndex(clientIndex);
         _transport = transport;
         _log = log;
+        _role = role;
         _messageCoordinator = new BrokerLobbyMessageCoordinator(log);
     }
 
@@ -103,6 +105,7 @@ public sealed class BrokerBackedNetService
         }
 
         handlers.Add(handler);
+        _log?.Invoke($"Broker handler registered: sessionId={_sessionId} messageType={key} handler={FormatHandler(handler)} handlerCount={handlers.Count}.");
     }
 
     private void UnregisterHandler(string key, Delegate handler)
@@ -113,6 +116,7 @@ public sealed class BrokerBackedNetService
         }
 
         handlers.Remove(handler);
+        _log?.Invoke($"Broker handler unregistered: sessionId={_sessionId} messageType={key} handler={FormatHandler(handler)} handlerCount={handlers.Count}.");
         if (handlers.Count == 0)
         {
             _handlersByMessageType.Remove(key);
@@ -188,8 +192,15 @@ public sealed class BrokerBackedNetService
             try
             {
                 _log?.Invoke($"Broker inbound flushed: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}{PayloadSuffix(envelope)}.");
-                DispatchEnvelopeAsync(envelope, CancellationToken.None).GetAwaiter().GetResult();
-                _log?.Invoke($"Broker inbound dispatched: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}{PayloadSuffix(envelope)}.");
+                var handlerCount = DispatchEnvelopeAsync(envelope, CancellationToken.None).GetAwaiter().GetResult();
+                if (handlerCount == 0)
+                {
+                    _log?.Invoke($"Broker inbound skipped: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence} reason=no registered handler{PayloadSuffix(envelope)}.");
+                }
+                else
+                {
+                    _log?.Invoke($"Broker inbound dispatched: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence} handlerCount={handlerCount}{PayloadSuffix(envelope)}.");
+                }
             }
             catch (Exception exception)
             {
@@ -201,6 +212,7 @@ public sealed class BrokerBackedNetService
     public void SetGameLoading(bool isGameLoading)
     {
         IsGameLoading = isGameLoading;
+        _log?.Invoke($"Broker game loading changed: sessionId={_sessionId} client={_clientId} isGameLoading={isGameLoading}.");
     }
 
     public void SetPeerReadyForBroadcasting(ulong peerId)
@@ -240,15 +252,18 @@ public sealed class BrokerBackedNetService
     {
         var messageType = typeof(T);
         var isLobbyCharacterChange = IsLobbyPlayerChangedCharacter(messageType);
-        if (string.Equals(messageType.FullName, "MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync.PeerInputMessage", StringComparison.Ordinal))
-        {
-            reason = "peer input is not required for lobby-only broker sync";
-            return true;
-        }
-
         if (isLobbyCharacterChange && IsNullCharacterChange(message))
         {
             reason = "null character change is an initialization artifact";
+            return true;
+        }
+
+        if (_role == BrokerClientRole.Client
+            && IsSyncPlayerDataMessage(messageType)
+            && TryReadSyncPlayerDataNetId(message, out var playerNetId)
+            && playerNetId != NetId)
+        {
+            reason = $"client attempted to publish non-local player data playerNetId={playerNetId} localNetId={NetId}";
             return true;
         }
 
@@ -269,7 +284,7 @@ public sealed class BrokerBackedNetService
         return characterField is not null && characterField.GetValue(message) is null;
     }
 
-    public async Task DispatchEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
+    public async Task<int> DispatchEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
         TrackKnownPeers(envelope);
@@ -279,14 +294,16 @@ public sealed class BrokerBackedNetService
 
         if (!_handlersByMessageType.TryGetValue(envelope.MessageType, out var handlers))
         {
-            return;
+            return 0;
         }
 
-        foreach (var handler in handlers.ToArray())
+        var dispatchHandlers = handlers.ToArray();
+        foreach (var handler in dispatchHandlers)
         {
             var parameters = handler.Method.GetParameters();
             var parameterType = parameters[0].ParameterType;
             var message = BrokerEnvelopeMessageSerializer.Deserialize(envelope, parameterType);
+            NormalizeInboundMessageForLocalClient(message);
             if (parameters.Length == 1)
             {
                 InvokeHandler(handler, message);
@@ -298,6 +315,7 @@ public sealed class BrokerBackedNetService
         }
 
         await Task.CompletedTask;
+        return dispatchHandlers.Length;
     }
 
     private static bool IsClientLobbyJoinResponse(BrokerEnvelope envelope)
@@ -424,6 +442,129 @@ public sealed class BrokerBackedNetService
             StringComparison.Ordinal);
     }
 
+    private void NormalizeInboundMessageForLocalClient(object message)
+    {
+        if (!string.Equals(
+            message.GetType().FullName,
+            "MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby.LobbyBeginRunMessage",
+            StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (ReadMember(message, "playersInLobby") is not System.Collections.IList players
+            || players.IsReadOnly
+            || players.IsFixedSize
+            || players.Count < 2)
+        {
+            return;
+        }
+
+        for (var index = 0; index < players.Count; index++)
+        {
+            var player = players[index];
+            if (player is null
+                || !TryReadUInt64(ReadMember(player, "id"), out var playerId)
+                || playerId != NetId)
+            {
+                continue;
+            }
+
+            if (index == 0)
+            {
+                return;
+            }
+
+            players.RemoveAt(index);
+            players.Insert(0, player);
+            _log?.Invoke($"Broker normalized inbound begin run player order: sessionId={_sessionId} client={_clientId} localNetId={NetId} originalIndex={index}.");
+            return;
+        }
+    }
+
+    private static bool IsSyncPlayerDataMessage(Type messageType)
+    {
+        return string.Equals(
+            messageType.FullName,
+            "MegaCrit.Sts2.Core.Multiplayer.Messages.Game.SyncPlayerDataMessage",
+            StringComparison.Ordinal);
+    }
+
+    private static bool TryReadSyncPlayerDataNetId<T>(T message, out ulong playerNetId)
+    {
+        playerNetId = 0;
+        if (message is null)
+        {
+            return false;
+        }
+
+        var player = ReadMember(message, "player");
+        if (player is null)
+        {
+            return false;
+        }
+
+        return TryReadUInt64(
+            ReadFirstMember(player, "NetId", "netId", "id", "playerId"),
+            out playerNetId);
+    }
+
+    private static object? ReadFirstMember(object instance, params string[] names)
+    {
+        foreach (var name in names)
+        {
+            var value = ReadMember(instance, name);
+            if (value is not null)
+            {
+                return value;
+            }
+        }
+
+        return null;
+    }
+
+    private static object? ReadMember(object instance, string name)
+    {
+        const System.Reflection.BindingFlags flags =
+            System.Reflection.BindingFlags.Instance
+            | System.Reflection.BindingFlags.Public
+            | System.Reflection.BindingFlags.NonPublic;
+        var type = instance.GetType();
+        var field = type.GetField(name, flags);
+        if (field is not null)
+        {
+            return field.GetValue(instance);
+        }
+
+        var property = type.GetProperty(name, flags);
+        return property?.GetValue(instance);
+    }
+
+    private static bool TryReadUInt64(object? value, out ulong result)
+    {
+        switch (value)
+        {
+            case ulong ulongValue:
+                result = ulongValue;
+                return true;
+            case long longValue when longValue >= 0:
+                result = (ulong)longValue;
+                return true;
+            case uint uintValue:
+                result = uintValue;
+                return true;
+            case int intValue when intValue >= 0:
+                result = (ulong)intValue;
+                return true;
+            case string text when ulong.TryParse(text, out var parsed):
+                result = parsed;
+                return true;
+            default:
+                result = 0;
+                return false;
+        }
+    }
+
     private static bool MatchesMessageType(string messageType, string fullName)
     {
         return string.Equals(messageType, fullName, StringComparison.Ordinal)
@@ -446,6 +587,11 @@ public sealed class BrokerBackedNetService
     private static string MessageTypeKey<T>()
     {
         return typeof(T).AssemblyQualifiedName ?? typeof(T).FullName ?? typeof(T).Name;
+    }
+
+    private static string FormatHandler(Delegate handler)
+    {
+        return $"{handler.Method.DeclaringType?.FullName ?? "<unknown>"}.{handler.Method.Name}";
     }
 
     private static string PayloadSuffix(object? message)

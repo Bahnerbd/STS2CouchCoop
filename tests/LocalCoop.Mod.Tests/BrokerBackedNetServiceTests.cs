@@ -2,6 +2,7 @@ using LocalCoop.Mod.Runtime;
 using LocalCoop.Protocol;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using LocalCoop.Broker;
+using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
@@ -102,7 +103,7 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
-    public void SendMessageSkipsPeerInputMessagesForLobbyOnlyBrokerMode()
+    public void SendMessagePreservesPeerInputMessages()
     {
         var transport = new CapturingTransport();
         var logs = new List<string>();
@@ -115,9 +116,65 @@ public sealed class BrokerBackedNetServiceTests
 
         service.SendMessage(new PeerInputMessage());
 
-        Assert.AreEqual(0, transport.Sent.Count);
-        Assert.IsTrue(logs.Any(log => log.Contains("suppressed outbound", StringComparison.Ordinal)
+        var envelope = transport.Sent.Single();
+        Assert.AreEqual(typeof(PeerInputMessage).AssemblyQualifiedName, envelope.MessageType);
+        Assert.IsFalse(logs.Any(log => log.Contains("suppressed outbound", StringComparison.Ordinal)
             && log.Contains(nameof(PeerInputMessage), StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void ClientSyncPlayerDataForDifferentPlayerIsSuppressed()
+    {
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-1",
+            clientIndex: 1,
+            transport: new CapturingTransport(),
+            role: Runtime.BrokerClientRole.Client);
+        var message = CreateSyncPlayerDataMessage(BrokerPlayerId.ForClientIndex(0));
+
+        var suppressed = IsOutboundSuppressed(service, message, out var reason);
+
+        Assert.IsTrue(suppressed);
+        StringAssert.Contains(reason, "non-local player data");
+        StringAssert.Contains(reason, BrokerPlayerId.ForClientIndex(0).ToString());
+        StringAssert.Contains(reason, BrokerPlayerId.ForClientIndex(1).ToString());
+    }
+
+    [TestMethod]
+    public void NormalizeBeginRunMessagePutsLocalPlayerFirst()
+    {
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-0",
+            clientIndex: 0,
+            transport: new CapturingTransport(),
+            role: Runtime.BrokerClientRole.Client);
+        var message = new LobbyBeginRunMessage
+        {
+            playersInLobby =
+            [
+                new LobbyPlayer
+                {
+                    id = BrokerPlayerId.ForClientIndex(1),
+                    slotId = 0
+                },
+                new LobbyPlayer
+                {
+                    id = BrokerPlayerId.ForClientIndex(0),
+                    slotId = 1
+                }
+            ]
+        };
+
+        NormalizeInboundMessageForLocalClient(service, message);
+
+        var players = message.playersInLobby;
+        Assert.IsNotNull(players);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), players[0].id);
+        Assert.AreEqual(1, players[0].slotId);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), players[1].id);
+        Assert.AreEqual(0, players[1].slotId);
     }
 
     [TestMethod]
@@ -239,11 +296,13 @@ public sealed class BrokerBackedNetServiceTests
     [TestMethod]
     public void TracksConnectionLoadingAndRawLobbyIdentifier()
     {
+        var log = new List<string>();
         var service = new BrokerBackedNetService(
             sessionId: "local-test",
             clientId: "client-0",
             clientIndex: 0,
-            new CapturingTransport());
+            new CapturingTransport(),
+            log.Add);
 
         Assert.IsTrue(service.IsConnected);
         Assert.IsFalse(service.IsGameLoading);
@@ -252,6 +311,8 @@ public sealed class BrokerBackedNetServiceTests
 
         Assert.IsTrue(service.IsGameLoading);
         Assert.AreEqual("local-test", service.GetRawLobbyIdentifier());
+        Assert.IsTrue(log.Any(line => line.Contains("Broker game loading changed", StringComparison.Ordinal)
+            && line.Contains("isGameLoading=True", StringComparison.Ordinal)));
         service.Update();
     }
 
@@ -498,7 +559,45 @@ public sealed class BrokerBackedNetServiceTests
         await loop.WaitAsync(TimeSpan.FromSeconds(1));
 
         Assert.IsTrue(logs.Any(log => log.Contains("Broker inbound flushed", StringComparison.Ordinal)));
-        Assert.IsTrue(logs.Any(log => log.Contains("Broker inbound dispatched", StringComparison.Ordinal)));
+        Assert.IsTrue(logs.Any(log => log.Contains("Broker inbound dispatched", StringComparison.Ordinal)
+            && log.Contains("handlerCount=1", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public async Task UpdateLogsInboundEnvelopeWithoutRegisteredHandler()
+    {
+        var transport = new QueuedTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport, logs.Add);
+
+        var loop = service.RunReceiveLoopAsync(CancellationToken.None);
+        await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            new FakeLobbyMessage("logs"),
+            sequence: 1));
+        await Task.Delay(50);
+        service.Update();
+        await transport.CompleteAsync();
+        await loop.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.IsTrue(logs.Any(log => log.Contains("Broker inbound skipped", StringComparison.Ordinal)
+            && log.Contains("reason=no registered handler", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void RegisterMessageHandlerLogsMessageTypeAndCount()
+    {
+        var transport = new CapturingTransport();
+        var logs = new List<string>();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport, logs.Add);
+
+        service.RegisterMessageHandler<FakeLobbyMessage>(_ => { });
+
+        Assert.IsTrue(logs.Any(log => log.Contains("Broker handler registered", StringComparison.Ordinal)
+            && log.Contains(typeof(FakeLobbyMessage).AssemblyQualifiedName!, StringComparison.Ordinal)
+            && log.Contains("handlerCount=1", StringComparison.Ordinal)));
     }
 
     [TestMethod]
@@ -813,6 +912,22 @@ public sealed class BrokerBackedNetServiceTests
             sequence);
     }
 
+    private static object CreateSyncPlayerDataMessage(ulong playerNetId)
+    {
+        var messageType = typeof(PeerInputMessage).Assembly.GetType(
+            "MegaCrit.Sts2.Core.Multiplayer.Messages.Game.SyncPlayerDataMessage",
+            throwOnError: true)!;
+        var playerMember = FindFieldOrProperty(messageType, "player")
+            ?? throw new MissingMemberException(messageType.FullName, "player");
+        var playerType = GetMemberType(playerMember);
+        var message = RuntimeHelpers.GetUninitializedObject(messageType);
+        var player = RuntimeHelpers.GetUninitializedObject(playerType);
+
+        SetFieldOrProperty(player, "NetId", playerNetId);
+        SetFieldOrProperty(message, "player", player);
+        return message;
+    }
+
     private static bool IsOutboundSuppressed<T>(BrokerBackedNetService service, T message, out string reason)
     {
         var method = typeof(BrokerBackedNetService)
@@ -822,6 +937,65 @@ public sealed class BrokerBackedNetServiceTests
         var suppressed = (bool)method.MakeGenericMethod(typeof(T)).Invoke(service, args)!;
         reason = (string)(args[1] ?? string.Empty);
         return suppressed;
+    }
+
+    private static bool IsOutboundSuppressed(BrokerBackedNetService service, object message, out string reason)
+    {
+        var method = typeof(BrokerBackedNetService)
+            .GetMethod("ShouldSuppressOutboundMessage", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(nameof(BrokerBackedNetService), "ShouldSuppressOutboundMessage");
+        object?[] args = [message, null];
+        var suppressed = (bool)method.MakeGenericMethod(message.GetType()).Invoke(service, args)!;
+        reason = (string)(args[1] ?? string.Empty);
+        return suppressed;
+    }
+
+    private static void NormalizeInboundMessageForLocalClient(BrokerBackedNetService service, object message)
+    {
+        var method = typeof(BrokerBackedNetService)
+            .GetMethod("NormalizeInboundMessageForLocalClient", BindingFlags.Instance | BindingFlags.NonPublic)
+            ?? throw new MissingMethodException(nameof(BrokerBackedNetService), "NormalizeInboundMessageForLocalClient");
+        method.Invoke(service, [message]);
+    }
+
+    private static MemberInfo? FindFieldOrProperty(Type type, string name)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        return (MemberInfo?)type.GetField(name, flags)
+            ?? type.GetProperty(name, flags);
+    }
+
+    private static Type GetMemberType(MemberInfo member)
+    {
+        return member switch
+        {
+            FieldInfo field => field.FieldType,
+            PropertyInfo property => property.PropertyType,
+            _ => throw new ArgumentException($"Unsupported member {member.MemberType}.", nameof(member))
+        };
+    }
+
+    private static void SetFieldOrProperty(object instance, string name, object? value)
+    {
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+        var type = instance.GetType();
+        var field = type.GetField(name, flags)
+            ?? type.GetField($"<{name}>k__BackingField", flags)
+            ?? type.GetField(char.ToLowerInvariant(name[0]) + name[1..], flags);
+        if (field is not null)
+        {
+            field.SetValue(instance, value);
+            return;
+        }
+
+        var property = type.GetProperty(name, flags);
+        if (property is not null && property.CanWrite)
+        {
+            property.SetValue(instance, value);
+            return;
+        }
+
+        throw new MissingMemberException(type.FullName, name);
     }
 
     private sealed class CapturingTransport : IBrokerEnvelopeTransport
