@@ -12,6 +12,7 @@ TestResults/
 # Local runtime artifacts
 artifacts/
 tmp/
+.localcoop-clients/
+.localcoop-runtime/
 *.log
 *.pid
-

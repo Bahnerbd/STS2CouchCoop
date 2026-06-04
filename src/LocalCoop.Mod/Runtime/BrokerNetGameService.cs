@@ -1,3 +1,4 @@
+using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Quality;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
@@ -24,7 +25,7 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
     {
         _inner = inner;
         _type = type;
-        _lastConnectedPeerIds = inner.ConnectedPeerIds.ToHashSet();
+        _lastConnectedPeerIds = [];
         _inner.PeerTracked += HandlePeerTracked;
         _receiveLoop = _inner.RunReceiveLoopAsync(_receiveLoopCancellation.Token);
     }
@@ -83,7 +84,7 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
     public void RegisterMessageHandler<T>(MessageHandlerDelegate<T> messageHandlerDelegate)
         where T : INetMessage
     {
-        Action<T, ulong> adapter = (message, senderId) => messageHandlerDelegate(message, senderId);
+        Action<T, ulong> adapter = (message, senderId) => InvokeWithLocalContext(() => messageHandlerDelegate(message, senderId));
         _registeredHandlers[messageHandlerDelegate] = adapter;
         _inner.RegisterMessageHandler(adapter);
     }
@@ -115,11 +116,6 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
         }
 
         _lastConnectedPeerIds = after;
-    }
-
-    public void MarkLobbyReady()
-    {
-        _inner.MarkLobbyReady();
     }
 
     public void Disconnect(NetError reason, bool now)
@@ -177,5 +173,18 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
         }
 
         _clientConnected?.Invoke(peerId);
+    }
+
+    private void InvokeWithLocalContext(Action handler)
+    {
+        LocalContext.NetId = NetId;
+        try
+        {
+            handler();
+        }
+        finally
+        {
+            LocalContext.NetId = NetId;
+        }
     }
 }

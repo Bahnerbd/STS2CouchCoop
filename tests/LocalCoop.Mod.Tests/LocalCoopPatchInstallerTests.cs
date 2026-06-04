@@ -8,41 +8,46 @@ namespace LocalCoop.Mod.Tests;
 public sealed class LocalCoopPatchInstallerTests
 {
     [TestMethod]
-    public void DefaultPatchTypesIncludeBrokerLobbySubstitution()
+    public void DefaultPatchTypesContainCommunicationBridgeAndFocusedDiagnosticsPatches()
     {
-        CollectionAssert.Contains(
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                typeof(LocalCoop.Mod.Patches.BrokerClientJoinFlowPatch),
+                typeof(LocalCoop.Mod.Patches.BrokerJoinFriendScreenPatch),
+                typeof(LocalCoop.Mod.Patches.BrokerLobbyServiceSubstitutionPatch),
+                typeof(LocalCoop.Mod.Patches.BrokerBeginRunPatch),
+                typeof(LocalCoop.Mod.Patches.RunIdentityVoidDiagnosticsPatches),
+                typeof(LocalCoop.Mod.Patches.RunIdentityLaunchDiagnosticsPatches),
+                typeof(LocalCoop.Mod.Patches.CombatSyncVoidDiagnosticsPatches),
+                typeof(LocalCoop.Mod.Patches.CombatSyncWaitDiagnosticsPatches),
+                typeof(LocalCoop.Mod.Patches.PlayerChoiceDiagnosticsPatches)
+            },
+            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray());
+    }
+
+    [TestMethod]
+    public void DefaultPatchTypesDoNotContainGlobalGetNodeDiagnosticsPatch()
+    {
+        CollectionAssert.DoesNotContain(
             LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.BrokerLobbyServiceSubstitutionPatch));
-        CollectionAssert.Contains(
+            typeof(LocalCoop.Mod.Patches.PlayerChoiceGetNodeDiagnosticsPatches));
+    }
+
+    [TestMethod]
+    public void DefaultPatchTypesDoNotContainRelicHolderTranspilerProbe()
+    {
+        CollectionAssert.DoesNotContain(
             LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.BrokerClientJoinFlowPatch));
-        CollectionAssert.Contains(
+            typeof(LocalCoop.Mod.Patches.PlayerChoiceRelicHolderReadyProbePatches));
+    }
+
+    [TestMethod]
+    public void DefaultPatchTypesDoNotContainRelicNodeBreadcrumbs()
+    {
+        CollectionAssert.DoesNotContain(
             LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.BrokerJoinFriendScreenPatch));
-        CollectionAssert.Contains(
-            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.BrokerClientLobbyHandshakePatch));
-        CollectionAssert.Contains(
-            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.BrokerBeginRunPatch));
-        CollectionAssert.Contains(
-            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.CharacterSelectInputDiagnosticsPatches));
-        CollectionAssert.Contains(
-            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.ControllerInputOwnershipPatches));
-        CollectionAssert.Contains(
-            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches));
-        CollectionAssert.Contains(
-            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.RunTransitionTaskDiagnosticsPatches));
-        CollectionAssert.Contains(
-            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.RunTransitionVoidDiagnosticsPatches));
-        CollectionAssert.Contains(
-            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.PlayerChoiceDiagnosticsPatches));
+            typeof(LocalCoop.Mod.Patches.PlayerChoiceRelicNodeBreadcrumbPatches));
     }
 
     [TestMethod]

@@ -26,6 +26,13 @@ public sealed class InMemoryBrokerSession
 
     public string? HostClientId { get; private set; }
 
+    public BrokerClientRegistration? FindClient(string clientId)
+    {
+        return _clientsById.TryGetValue(clientId, out var registration)
+            ? registration
+            : null;
+    }
+
     public void Register(BrokerClientRegistration registration)
     {
         if (string.IsNullOrWhiteSpace(registration.ClientId))
@@ -91,11 +98,6 @@ public sealed class InMemoryBrokerSession
 
         if (envelope.TargetClientId is { } targetClientId)
         {
-            if (!_clientsById.ContainsKey(targetClientId))
-            {
-                throw new InvalidOperationException($"target client '{targetClientId}' is not registered.");
-            }
-
             return [new BrokerRoute(targetClientId, envelope)];
         }
 

@@ -6,6 +6,8 @@ public sealed class BrokerClientConnection : IAsyncDisposable
 {
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
+    private readonly List<BrokerClientRegistrationDto> _connectedPeers = [];
+    private readonly object _connectedPeersGate = new();
 
     private BrokerClientConnection(TcpClient client)
     {
@@ -42,7 +44,21 @@ public sealed class BrokerClientConnection : IAsyncDisposable
             throw new InvalidDataException("Broker did not accept registration for the requested client.");
         }
 
+        connection.SetConnectedPeers(accepted.RegistrationAccepted.ConnectedPeers);
         return connection;
+    }
+
+    public event Action<BrokerClientRegistrationDto>? PeerRegistered;
+
+    public IReadOnlyList<BrokerClientRegistrationDto> ConnectedPeers
+    {
+        get
+        {
+            lock (_connectedPeersGate)
+            {
+                return _connectedPeers.ToArray();
+            }
+        }
     }
 
     public async Task SendEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
@@ -68,6 +84,12 @@ public sealed class BrokerClientConnection : IAsyncDisposable
                 return message.Envelope
                     ?? throw new InvalidDataException("Broker envelope message did not include an envelope.");
             }
+
+            if (message.Kind == BrokerTransportMessageKind.PeerRegistered)
+            {
+                AddConnectedPeer(message.PeerRegistration
+                    ?? throw new InvalidDataException("Broker peer registration message did not include peer data."));
+            }
         }
     }
 
@@ -77,5 +99,31 @@ public sealed class BrokerClientConnection : IAsyncDisposable
         _client.Dispose();
         return ValueTask.CompletedTask;
     }
-}
 
+    private void SetConnectedPeers(IReadOnlyList<BrokerClientRegistrationDto> registrations)
+    {
+        lock (_connectedPeersGate)
+        {
+            _connectedPeers.Clear();
+            _connectedPeers.AddRange(registrations);
+        }
+    }
+
+    private void AddConnectedPeer(BrokerClientRegistrationDto registration)
+    {
+        var added = false;
+        lock (_connectedPeersGate)
+        {
+            if (_connectedPeers.All(peer => !string.Equals(peer.ClientId, registration.ClientId, StringComparison.Ordinal)))
+            {
+                _connectedPeers.Add(registration);
+                added = true;
+            }
+        }
+
+        if (added)
+        {
+            PeerRegistered?.Invoke(registration);
+        }
+    }
+}

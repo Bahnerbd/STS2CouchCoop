@@ -89,31 +89,24 @@ public sealed class BrokerLobbyServiceSubstitutionTests
     }
 
     [TestMethod]
-    public async Task MarkBrokerLobbyReadyFlushesQueuedLobbyState()
+    public void TrySubstituteFirstArgumentReusesPendingClientJoinService()
     {
-        var transport = new QueuedTransport();
-        var inner = new BrokerBackedNetService("local-test", "client-1", 1, transport);
-        var receivedCount = 0;
-        inner.RegisterMessageHandler<LobbyPlayerSetReadyMessage>(_ => receivedCount++);
-        using var service = new BrokerNetGameService(inner, NetGameType.Client);
+        var settings = EnabledSettings(BrokerClientRole.Client);
+        var inner = new BrokerBackedNetService("local-test", settings.ClientId, settings.Config!.ClientIndex, new CapturingTransport());
+        var service = new BrokerNetGameService(inner, NetGameType.Client);
         object?[] args = [service];
+        BrokerPendingNetGameServiceRegistry.Store(settings.ClientId, service);
 
-        var loop = inner.RunReceiveLoopAsync(CancellationToken.None);
-        await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
-            "local-test",
-            "client-0",
-            targetClientId: "client-1",
-            new LobbyPlayerSetReadyMessage(),
-            sequence: 1));
-        await Task.Delay(50);
-        service.Update();
+        var substituted = BrokerLobbyServiceSubstitution.TrySubstituteFirstArgument(
+            settings,
+            args,
+            BrokerClientRole.Client,
+            () => throw new InvalidOperationException("pending client service should be reused"),
+            _ => { });
 
-        BrokerLobbyServiceSubstitution.MarkBrokerLobbyReady(args, _ => { });
-        service.Update();
-        await transport.CompleteAsync();
-        await loop.WaitAsync(TimeSpan.FromSeconds(1));
-
-        Assert.AreEqual(1, receivedCount);
+        Assert.IsTrue(substituted);
+        Assert.AreSame(service, args[0]);
+        service.Dispose();
     }
 
     private static BrokerModeSettings EnabledSettings(BrokerClientRole role)

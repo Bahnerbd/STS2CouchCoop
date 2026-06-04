@@ -9,6 +9,8 @@ namespace LocalCoop.Mod.Patches;
 [HarmonyPatch]
 public static class BrokerClientJoinFlowPatch
 {
+    private static readonly TimeSpan BrokerConnectTimeout = TimeSpan.FromSeconds(3);
+
     public static MethodBase? TargetMethod()
     {
         var type = AccessTools.TypeByName("MegaCrit.Sts2.Core.Multiplayer.Game.JoinFlow");
@@ -25,11 +27,23 @@ public static class BrokerClientJoinFlowPatch
             return true;
         }
 
-        var localClientIndex = settings.Config?.ClientIndex ?? 1;
-        new BrokerEventLog(settings.EventLogPath).Write(
-            $"Broker client join flow: returning synthetic standard lobby join result for local client index {localClientIndex}.");
-        __result = Task.FromResult(BrokerClientJoinFlow.CreateStandardLobbyJoinResult(localClientIndex));
+        var log = new BrokerEventLog(settings.EventLogPath);
+        __result = BrokerClientJoinFlow.BeginStandardBrokerJoinAsync(
+            settings,
+            () => CreateTransport(settings),
+            log.Write,
+            CancellationToken.None);
         return false;
+    }
+
+    private static IBrokerEnvelopeTransport CreateTransport(BrokerModeSettings settings)
+    {
+        var config = BrokerLobbyServiceSubstitution.CreateRegistrationConfig(settings, BrokerClientRole.Client);
+        return BrokerEnvelopeTransportConnector.ConnectBlocking(
+            config,
+            settings.ClientId,
+            BrokerConnectTimeout,
+            CancellationToken.None);
     }
 
     private static BrokerModeSettings LoadSettings()

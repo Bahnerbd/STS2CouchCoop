@@ -74,6 +74,45 @@ public sealed class BrokerEnvelopeTransportConnectorTests
         }
     }
 
+    [TestMethod]
+    public async Task RuntimeConnectionRaisesPeerRegisteredWhenLaterPeerRegisters()
+    {
+        await using var server = new BrokerTcpServer("local-test", IPAddress.Loopback, port: 0);
+        await server.StartAsync(CancellationToken.None);
+        await using var host = await BrokerClientConnection.ConnectAsync(
+            new BrokerClientConfig(BrokerClientRole.Host, 0, "127.0.0.1", server.Port, "local-test"),
+            "client-0",
+            CancellationToken.None);
+        var peerRegistered = new TaskCompletionSource<BrokerClientRegistrationInfo>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        host.PeerRegistered += peerRegistered.SetResult;
+        using var readCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        var readTask = Task.Run(async () =>
+        {
+            try
+            {
+                await host.ReadEnvelopeAsync(readCancellation.Token);
+            }
+            catch (OperationCanceledException) when (readCancellation.IsCancellationRequested)
+            {
+            }
+        });
+
+        await using var client = await BrokerClientConnection.ConnectAsync(
+            new BrokerClientConfig(BrokerClientRole.Client, 1, "127.0.0.1", server.Port, "local-test"),
+            "client-1",
+            CancellationToken.None);
+
+        var registration = await peerRegistered.Task.WaitAsync(TimeSpan.FromSeconds(1));
+        await readCancellation.CancelAsync();
+        await readTask;
+
+        Assert.AreEqual("client-1", registration.ClientId);
+        Assert.AreEqual(BrokerClientRole.Client, registration.Role);
+        Assert.AreEqual(1, registration.ClientIndex);
+        Assert.AreEqual("client-1", host.ConnectedPeers.Single().ClientId);
+    }
+
     private sealed class NonPumpingSynchronizationContext : SynchronizationContext
     {
         public override void Post(SendOrPostCallback d, object? state)

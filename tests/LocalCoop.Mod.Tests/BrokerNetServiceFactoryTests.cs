@@ -1,4 +1,5 @@
 using LocalCoop.Mod.Runtime;
+using MegaCrit.Sts2.Core.Context;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
@@ -96,7 +97,7 @@ public sealed class BrokerNetServiceFactoryTests
     }
 
     [TestMethod]
-    public async Task BrokerNetGameServiceMarkLobbyReadyFlushesQueuedLobbyState()
+    public async Task BrokerNetGameServiceUpdateDispatchesQueuedHandlerMessages()
     {
         var transport = new QueuedTransport();
         var inner = new BrokerBackedNetService(
@@ -116,14 +117,47 @@ public sealed class BrokerNetServiceFactoryTests
             sequence: 1));
 
         await Task.Delay(50);
-        service.Update();
         Assert.AreEqual(0, receivedCount);
 
-        service.MarkLobbyReady();
         service.Update();
         service.Disconnect(default, now: true);
 
         Assert.AreEqual(1, receivedCount);
+    }
+
+    [TestMethod]
+    public async Task BrokerNetGameServiceDispatchReassertsLocalContextForNativeHandlers()
+    {
+        var previousNetId = LocalContext.NetId;
+        var inner = new BrokerBackedNetService(
+            "local-test",
+            "client-0",
+            0,
+            new CapturingTransport());
+        using var service = new BrokerNetGameService(inner, NetGameType.Host);
+        ulong? observedNetId = null;
+        service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>((_, _) => observedNetId = LocalContext.NetId);
+
+        try
+        {
+            LocalContext.NetId = BrokerPlayerId.ForClientIndex(1);
+
+            await inner.DispatchEnvelopeAsync(
+                BrokerEnvelopeMessageSerializer.ToEnvelope(
+                    "local-test",
+                    "client-1",
+                    targetClientId: "client-0",
+                    new LobbyPlayerSetReadyMessage(),
+                    sequence: 1),
+                CancellationToken.None);
+
+            Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), observedNetId);
+            Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), LocalContext.NetId);
+        }
+        finally
+        {
+            LocalContext.NetId = previousNetId;
+        }
     }
 
     [TestMethod]
@@ -154,7 +188,6 @@ public sealed class BrokerNetServiceFactoryTests
         using var service = new BrokerNetGameService(inner, NetGameType.Host);
         ulong? connectedPeer = null;
         service.ClientConnected += peerId => connectedPeer = peerId;
-        service.MarkLobbyReady();
 
         await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
             "local-test",
@@ -171,6 +204,46 @@ public sealed class BrokerNetServiceFactoryTests
     }
 
     [TestMethod]
+    public void BrokerNetGameServiceFirstUpdateFiresClientConnectedForInitialBrokerPeer()
+    {
+        var transport = new CapturingTransport(
+            [new BrokerClientRegistrationInfo("client-1", BrokerClientRole.Client, 1)]);
+        var inner = new BrokerBackedNetService(
+            "local-test",
+            "client-0",
+            0,
+            transport);
+        using var service = new BrokerNetGameService(inner, NetGameType.Host);
+        ulong? connectedPeer = null;
+        service.ClientConnected += peerId => connectedPeer = peerId;
+
+        service.Update();
+
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), connectedPeer);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), service.ConnectedPeers.Single().peerId);
+    }
+
+    [TestMethod]
+    public void BrokerNetGameServiceUpdateFiresClientConnectedForLaterBrokerPeer()
+    {
+        var transport = new CapturingTransport();
+        var inner = new BrokerBackedNetService(
+            "local-test",
+            "client-0",
+            0,
+            transport);
+        using var service = new BrokerNetGameService(inner, NetGameType.Host);
+        ulong? connectedPeer = null;
+        service.ClientConnected += peerId => connectedPeer = peerId;
+
+        transport.NotifyPeerRegistered(new BrokerClientRegistrationInfo("client-1", BrokerClientRole.Client, 1));
+        service.Update();
+
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), connectedPeer);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), service.ConnectedPeers.Single().peerId);
+    }
+
+    [TestMethod]
     public async Task BrokerNetGameServiceFiresClientConnectedBeforeJoinRequestHandler()
     {
         var transport = new QueuedTransport();
@@ -183,7 +256,6 @@ public sealed class BrokerNetServiceFactoryTests
         inner.RegisterMessageHandler<ClientLobbyJoinRequestMessage>(_ => order.Add("handler"));
         using var service = new BrokerNetGameService(inner, NetGameType.Host);
         service.ClientConnected += _ => order.Add("connected");
-        service.MarkLobbyReady();
 
         await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
             "local-test",
@@ -209,7 +281,6 @@ public sealed class BrokerNetServiceFactoryTests
             transport);
         inner.RegisterMessageHandler<ClientLobbyJoinRequestMessage>(_ => { });
         using var service = new BrokerNetGameService(inner, NetGameType.Host);
-        service.MarkLobbyReady();
 
         await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
             "local-test",
@@ -229,6 +300,20 @@ public sealed class BrokerNetServiceFactoryTests
 
     private sealed class CapturingTransport : IBrokerEnvelopeTransport
     {
+        public CapturingTransport(IReadOnlyList<BrokerClientRegistrationInfo>? connectedPeers = null)
+        {
+            ConnectedPeers = connectedPeers ?? [];
+        }
+
+        public IReadOnlyList<BrokerClientRegistrationInfo> ConnectedPeers { get; }
+
+        public event Action<BrokerClientRegistrationInfo>? PeerRegistered;
+
+        public void NotifyPeerRegistered(BrokerClientRegistrationInfo registration)
+        {
+            PeerRegistered?.Invoke(registration);
+        }
+
         public Task SendEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
         {
             return Task.CompletedTask;

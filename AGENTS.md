@@ -2,6 +2,14 @@
 
 This repo is a clean-start local transport broker for same-machine STS2 multiplayer experiments. Treat it as a transport bridge, not as an alternate game or lobby implementation.
 
+## Game-First Rule
+
+Before taking action, proposing a plan, or changing files, inspect the relevant STS2 game files and current project evidence until the game's native behavior is understood well enough to make the least intrusive change.
+
+Use the game install, decompiled/runtime observations, logs, reports, and existing mod docs as the source of truth. Key local evidence usually includes `..\release_info.json`, `..\data_sts2_windows_x86_64\sts2.dll`, `..\SlayTheSpire2.pck`, `..\mods\LocalCoop` runtime logs and probe reports, `..\docs\superpowers\reports`, and `docs\development`.
+
+LocalCoop should act as the bridging communication wrapper and let STS2 handle gameplay and lobby logic whenever possible. Prefer transport, lifecycle, factory, or adapter seams that preserve native STS2 messages over synthetic lobby truth, manual state replay, UI reconstruction, timing heuristics, or gameplay reconciliation.
+
 ## Core Philosophy
 
 - STS2 owns lobby and gameplay truth. Its native handlers should decide players, character choice, ready state, run start, and game state.
@@ -31,4 +39,3 @@ For broker smoke setup:
 dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-two-client .localcoop-clients local-test 38989
 dotnet run --project src\LocalCoop.Broker.Cli -- local-test 38989
 ```
-

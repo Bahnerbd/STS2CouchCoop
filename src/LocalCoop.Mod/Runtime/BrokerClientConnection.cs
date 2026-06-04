@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Net.Sockets;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace LocalCoop.Mod.Runtime;
 
@@ -9,6 +10,8 @@ public sealed class BrokerClientConnection : IAsyncDisposable
     private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
     private readonly TcpClient _client;
     private readonly NetworkStream _stream;
+    private readonly List<BrokerClientRegistrationInfo> _connectedPeers = [];
+    private readonly object _connectedPeersGate = new();
 
     private BrokerClientConnection(TcpClient client)
     {
@@ -31,7 +34,7 @@ public sealed class BrokerClientConnection : IAsyncDisposable
         var connection = new BrokerClientConnection(client);
 
         await connection.WriteAsync(BrokerTransportMessage.ForRegistration(
-            new BrokerClientRegistrationDto(clientId, config.Role, config.ClientIndex)),
+            new BrokerClientRegistrationInfo(clientId, config.Role, config.ClientIndex)),
             cancellationToken).ConfigureAwait(false);
 
         var accepted = await connection.ReadTransportMessageAsync(cancellationToken).ConfigureAwait(false);
@@ -43,7 +46,21 @@ public sealed class BrokerClientConnection : IAsyncDisposable
             throw new InvalidDataException("Broker did not accept registration for the requested client.");
         }
 
+        connection.SetConnectedPeers(accepted.RegistrationAccepted.ConnectedPeers);
         return connection;
+    }
+
+    public event Action<BrokerClientRegistrationInfo>? PeerRegistered;
+
+    public IReadOnlyList<BrokerClientRegistrationInfo> ConnectedPeers
+    {
+        get
+        {
+            lock (_connectedPeersGate)
+            {
+                return _connectedPeers.ToArray();
+            }
+        }
     }
 
     public Task SendEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
@@ -66,6 +83,12 @@ public sealed class BrokerClientConnection : IAsyncDisposable
                 return message.Envelope
                     ?? throw new InvalidDataException("Broker envelope message did not include an envelope.");
             }
+
+            if (message.Kind == BrokerTransportMessageKind.PeerRegistered)
+            {
+                AddConnectedPeer(message.PeerRegistration
+                    ?? throw new InvalidDataException("Broker peer registration message did not include peer data."));
+            }
         }
     }
 
@@ -74,6 +97,33 @@ public sealed class BrokerClientConnection : IAsyncDisposable
         _stream.Dispose();
         _client.Dispose();
         return ValueTask.CompletedTask;
+    }
+
+    private void SetConnectedPeers(IReadOnlyList<BrokerClientRegistrationInfo> registrations)
+    {
+        lock (_connectedPeersGate)
+        {
+            _connectedPeers.Clear();
+            _connectedPeers.AddRange(registrations);
+        }
+    }
+
+    private void AddConnectedPeer(BrokerClientRegistrationInfo registration)
+    {
+        var added = false;
+        lock (_connectedPeersGate)
+        {
+            if (_connectedPeers.All(peer => !string.Equals(peer.ClientId, registration.ClientId, StringComparison.Ordinal)))
+            {
+                _connectedPeers.Add(registration);
+                added = true;
+            }
+        }
+
+        if (added)
+        {
+            PeerRegistered?.Invoke(registration);
+        }
     }
 
     private async Task WriteAsync(BrokerTransportMessage message, CancellationToken cancellationToken)
@@ -138,30 +188,55 @@ public sealed class BrokerClientConnection : IAsyncDisposable
     {
         Registration,
         RegistrationAccepted,
-        Envelope
+        Envelope,
+        PeerRegistered
     }
 
     private sealed record BrokerTransportMessage(
         BrokerTransportMessageKind Kind,
-        BrokerClientRegistrationDto? Registration,
+        BrokerClientRegistrationInfo? Registration,
         BrokerRegistrationAccepted? RegistrationAccepted,
-        BrokerEnvelope? Envelope)
+        BrokerEnvelope? Envelope,
+        BrokerClientRegistrationInfo? PeerRegistration)
     {
-        public static BrokerTransportMessage ForRegistration(BrokerClientRegistrationDto registration)
+        public static BrokerTransportMessage ForRegistration(BrokerClientRegistrationInfo registration)
         {
-            return new BrokerTransportMessage(BrokerTransportMessageKind.Registration, registration, RegistrationAccepted: null, Envelope: null);
+            return new BrokerTransportMessage(
+                BrokerTransportMessageKind.Registration,
+                registration,
+                RegistrationAccepted: null,
+                Envelope: null,
+                PeerRegistration: null);
         }
 
         public static BrokerTransportMessage ForEnvelope(BrokerEnvelope envelope)
         {
-            return new BrokerTransportMessage(BrokerTransportMessageKind.Envelope, Registration: null, RegistrationAccepted: null, envelope);
+            return new BrokerTransportMessage(
+                BrokerTransportMessageKind.Envelope,
+                Registration: null,
+                RegistrationAccepted: null,
+                envelope,
+                PeerRegistration: null);
         }
     }
 
-    private sealed record BrokerClientRegistrationDto(
-        string ClientId,
-        BrokerClientRole Role,
-        int ClientIndex);
+    private sealed record BrokerRegistrationAccepted
+    {
+        [JsonConstructor]
+        public BrokerRegistrationAccepted(
+            string clientId,
+            string sessionId,
+            IReadOnlyList<BrokerClientRegistrationInfo>? connectedPeers = null)
+        {
+            ClientId = clientId;
+            SessionId = sessionId;
+            ConnectedPeers = connectedPeers ?? [];
+        }
 
-    private sealed record BrokerRegistrationAccepted(string ClientId, string SessionId);
+        public string ClientId { get; init; }
+
+        public string SessionId { get; init; }
+
+        public IReadOnlyList<BrokerClientRegistrationInfo> ConnectedPeers { get; init; }
+    }
 }

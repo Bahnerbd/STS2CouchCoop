@@ -16,6 +16,14 @@ public static class BrokerLobbyServiceSubstitution
             return false;
         }
 
+        if (effectiveRole == BrokerClientRole.Client
+            && BrokerPendingNetGameServiceRegistry.TryTake(settings.ClientId, out var pendingService))
+        {
+            args[0] = pendingService;
+            log($"Broker lobby service substituted pending client join service: clientId={settings.ClientId} configRole={settings.Config.Role} effectiveRole={effectiveRole}.");
+            return true;
+        }
+
         log($"Broker lobby service substitution connecting: clientId={settings.ClientId} configRole={settings.Config.Role} effectiveRole={effectiveRole} endpoint={settings.Config.Host}:{settings.Config.Port} sessionId={settings.Config.SessionId}.");
         var brokerService = BrokerNetServiceFactory.TryCreate(settings, createTransport(), log, effectiveRole);
         if (brokerService is null)
@@ -25,19 +33,6 @@ public static class BrokerLobbyServiceSubstitution
 
         args[0] = new BrokerNetGameService(brokerService, ToNetGameType(effectiveRole));
         log($"Broker lobby service substituted: clientId={settings.ClientId} effectiveRole={effectiveRole} netId={brokerService.NetId}.");
-        return true;
-    }
-
-    public static bool MarkBrokerLobbyReady(object?[] args, Action<string> log)
-    {
-        var service = args.OfType<BrokerNetGameService>().FirstOrDefault();
-        if (service is null)
-        {
-            return false;
-        }
-
-        service.MarkLobbyReady();
-        log($"Broker lobby service ready: netId={service.NetId}.");
         return true;
     }
 

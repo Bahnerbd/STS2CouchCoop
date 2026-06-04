@@ -30,6 +30,36 @@ function Assert-True($condition, [string]$message) {
     }
 }
 
+function Get-FreeTcpPort {
+    $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Parse('127.0.0.1'), 0)
+    try {
+        $listener.Start()
+        $listener.LocalEndpoint.Port
+    }
+    finally {
+        $listener.Stop()
+    }
+}
+
+function Start-TestTcpListenerProcess([int]$port) {
+    $listenerCommand = @"
+`$listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Parse('127.0.0.1'), $port)
+`$listener.Start()
+try {
+    Start-Sleep -Seconds 60
+}
+finally {
+    `$listener.Stop()
+}
+"@
+
+    Start-Process `
+        -FilePath 'powershell.exe' `
+        -ArgumentList @('-NoProfile', '-Command', $listenerCommand) `
+        -WindowStyle Hidden `
+        -PassThru
+}
+
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('localcoop-script-tests-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
 
@@ -66,7 +96,7 @@ try {
     Assert-Equal $configured.Source $configPath 'Existing config should identify config path as source.'
 
     $args = Format-LocalCoopBrokerArgumentList -SessionId 'local-test5' -Port 38993
-    Assert-SequenceEqual $args @('src\LocalCoop.Broker.Cli\bin\Debug\net9.0\LocalCoop.Broker.Cli.dll', 'local-test5', '38993') 'Broker argument list should launch the built CLI directly.'
+    Assert-SequenceEqual $args @('src\LocalCoop.Broker.Cli\bin\Debug\net9.0-launch\LocalCoop.Broker.Cli.dll', 'local-test5', '38993') 'Broker argument list should launch the launch-specific built CLI directly.'
 
     $harnessArgs = Format-LocalCoopHarnessPreparationArgumentList `
         -ConfigRoot '.localcoop-clients' `
@@ -149,10 +179,38 @@ try {
     try {
         Stop-LocalCoopProcessTree -Process $sleepProcess
         Assert-True ($sleepProcess.WaitForExit(5000)) 'Stop-LocalCoopProcessTree should stop the supplied process.'
+        Wait-LocalCoopBrokerProcess -Process $sleepProcess
     }
     finally {
         if (-not $sleepProcess.HasExited) {
             Stop-Process -Id $sleepProcess.Id -Force
+        }
+    }
+
+    $listenerPort = Get-FreeTcpPort
+    $listenerProcess = Start-TestTcpListenerProcess -port $listenerPort
+    try {
+        if (-not (Wait-LocalCoopBroker -HostName '127.0.0.1' -Port $listenerPort -TimeoutSeconds 5)) {
+            throw "Test listener did not start on port $listenerPort."
+        }
+
+        $cleanupIds = Get-LocalCoopExistingBrokerProcessIds `
+            -RepoRoot $tempRoot `
+            -HostName '127.0.0.1' `
+            -Port $listenerPort
+
+        Assert-True (($cleanupIds | Measure-Object).Count -gt 0) 'Broker cleanup should include the process listening on the configured broker port.'
+
+        Stop-LocalCoopExistingBrokers `
+            -RepoRoot $tempRoot `
+            -HostName '127.0.0.1' `
+            -Port $listenerPort
+
+        Assert-True (-not (Test-LocalCoopTcpPort -HostName '127.0.0.1' -Port $listenerPort -TimeoutMilliseconds 250)) 'Broker cleanup should release the configured broker port.'
+    }
+    finally {
+        if (-not $listenerProcess.HasExited) {
+            Stop-Process -Id $listenerProcess.Id -Force -ErrorAction SilentlyContinue
         }
     }
 

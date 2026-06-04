@@ -3,13 +3,10 @@ using LocalCoop.Protocol;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using LocalCoop.Broker;
 using MegaCrit.Sts2.Core.Entities.Multiplayer;
-using MegaCrit.Sts2.Core.Models;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Game.Sync;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
-using System.Runtime.CompilerServices;
 using System.Net;
-using System.Reflection;
 using System.Threading.Channels;
 using Runtime = LocalCoop.Mod.Runtime;
 
@@ -59,29 +56,11 @@ public sealed class BrokerBackedNetServiceTests
 
         await service.SendMessageAsync(new FakeLobbyMessage("ready"), targetPlayerId: BrokerPlayerId.ForClientIndex(1), CancellationToken.None);
 
-        StringAssert.Contains(logs.Single(), "Broker outbound");
-        StringAssert.Contains(logs.Single(), "local-test");
-        StringAssert.Contains(logs.Single(), "client-0");
-        StringAssert.Contains(logs.Single(), "client-1");
-        StringAssert.Contains(logs.Single(), nameof(FakeLobbyMessage));
-    }
-
-    [TestMethod]
-    public async Task SendMessageLogsThinTransportForLobbyMessage()
-    {
-        var transport = new CapturingTransport();
-        var logs = new List<string>();
-        var service = new BrokerBackedNetService(
-            sessionId: "local-test",
-            clientId: "client-0",
-            clientIndex: 0,
-            transport,
-            logs.Add);
-
-        await service.SendMessageAsync(new LobbyPlayerSetReadyMessage { ready = true }, targetPlayerId: null, CancellationToken.None);
-
-        Assert.IsTrue(logs.Any(log => log.Contains("Broker thin transport outbound lobby message", StringComparison.Ordinal)
-            && log.Contains(nameof(LobbyPlayerSetReadyMessage), StringComparison.Ordinal)));
+        var outboundLog = logs.Single(log => log.Contains("Broker outbound", StringComparison.Ordinal));
+        StringAssert.Contains(outboundLog, "local-test");
+        StringAssert.Contains(outboundLog, "client-0");
+        StringAssert.Contains(outboundLog, "client-1");
+        StringAssert.Contains(outboundLog, nameof(FakeLobbyMessage));
     }
 
     [TestMethod]
@@ -120,141 +99,6 @@ public sealed class BrokerBackedNetServiceTests
         Assert.AreEqual(typeof(PeerInputMessage).AssemblyQualifiedName, envelope.MessageType);
         Assert.IsFalse(logs.Any(log => log.Contains("suppressed outbound", StringComparison.Ordinal)
             && log.Contains(nameof(PeerInputMessage), StringComparison.Ordinal)));
-    }
-
-    [TestMethod]
-    public void ClientSyncPlayerDataForDifferentPlayerIsSuppressed()
-    {
-        var service = new BrokerBackedNetService(
-            sessionId: "local-test",
-            clientId: "client-1",
-            clientIndex: 1,
-            transport: new CapturingTransport(),
-            role: Runtime.BrokerClientRole.Client);
-        var message = CreateSyncPlayerDataMessage(BrokerPlayerId.ForClientIndex(0));
-
-        var suppressed = IsOutboundSuppressed(service, message, out var reason);
-
-        Assert.IsTrue(suppressed);
-        StringAssert.Contains(reason, "non-local player data");
-        StringAssert.Contains(reason, BrokerPlayerId.ForClientIndex(0).ToString());
-        StringAssert.Contains(reason, BrokerPlayerId.ForClientIndex(1).ToString());
-    }
-
-    [TestMethod]
-    public void InboundBeginRunMessagePreservesHostPlayerOrder()
-    {
-        var service = new BrokerBackedNetService(
-            sessionId: "local-test",
-            clientId: "client-1",
-            clientIndex: 1,
-            transport: new CapturingTransport(),
-            role: Runtime.BrokerClientRole.Client);
-        var message = new LobbyBeginRunMessage
-        {
-            playersInLobby =
-            [
-                new LobbyPlayer
-                {
-                    id = BrokerPlayerId.ForClientIndex(0),
-                    slotId = 0
-                },
-                new LobbyPlayer
-                {
-                    id = BrokerPlayerId.ForClientIndex(1),
-                    slotId = 1
-                }
-            ]
-        };
-
-        InspectInboundBeginRunPlayerOrder(service, message);
-
-        var players = message.playersInLobby;
-        Assert.IsNotNull(players);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), players[0].id);
-        Assert.AreEqual(0, players[0].slotId);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), players[1].id);
-        Assert.AreEqual(1, players[1].slotId);
-    }
-
-    [TestMethod]
-    public void InboundBeginRunMessagePreservesRuntimeHostOrderWhenClientZeroIsLocal()
-    {
-        var service = new BrokerBackedNetService(
-            sessionId: "local-test",
-            clientId: "client-0",
-            clientIndex: 0,
-            transport: new CapturingTransport(),
-            role: Runtime.BrokerClientRole.Client);
-        var message = new LobbyBeginRunMessage
-        {
-            playersInLobby =
-            [
-                new LobbyPlayer
-                {
-                    id = BrokerPlayerId.ForClientIndex(1),
-                    slotId = 0
-                },
-                new LobbyPlayer
-                {
-                    id = BrokerPlayerId.ForClientIndex(0),
-                    slotId = 1
-                }
-            ]
-        };
-
-        InspectInboundBeginRunPlayerOrder(service, message);
-
-        var players = message.playersInLobby;
-        Assert.IsNotNull(players);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), players[0].id);
-        Assert.AreEqual(0, players[0].slotId);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), players[1].id);
-        Assert.AreEqual(1, players[1].slotId);
-    }
-
-    [TestMethod]
-    public void SendMessageSkipsNullLobbyCharacterChanges()
-    {
-        var transport = new CapturingTransport();
-        var logs = new List<string>();
-        var service = new BrokerBackedNetService(
-            sessionId: "local-test",
-            clientId: "client-1",
-            clientIndex: 1,
-            transport,
-            logs.Add);
-
-        service.SendMessage(new LobbyPlayerChangedCharacterMessage());
-
-        Assert.AreEqual(0, transport.Sent.Count);
-        Assert.IsTrue(logs.Any(log => log.Contains("suppressed outbound", StringComparison.Ordinal)
-            && log.Contains(nameof(LobbyPlayerChangedCharacterMessage), StringComparison.Ordinal)));
-    }
-
-    [TestMethod]
-    public void ClientCharacterChangesBeforeHostJoinResponseAreNotSuppressed()
-    {
-        var transport = new CapturingTransport();
-        var logs = new List<string>();
-        var service = new BrokerBackedNetService(
-            sessionId: "local-test",
-            clientId: "client-1",
-            clientIndex: 1,
-            transport,
-            logs.Add);
-        var concreteCharacterType = typeof(CharacterModel).Assembly.GetTypes()
-            .First(type => !type.IsAbstract && typeof(CharacterModel).IsAssignableFrom(type));
-        var message = new LobbyPlayerChangedCharacterMessage
-        {
-            character = (CharacterModel)RuntimeHelpers.GetUninitializedObject(concreteCharacterType)
-        };
-
-        var suppressed = IsOutboundSuppressed(service, message, out var reason);
-
-        Assert.IsFalse(suppressed, reason);
-        Assert.AreEqual(0, transport.Sent.Count);
-        Assert.AreEqual(0, logs.Count);
     }
 
     [TestMethod]
@@ -425,29 +269,11 @@ public sealed class BrokerBackedNetServiceTests
             sequence: 1),
             CancellationToken.None);
 
-        StringAssert.Contains(logs.Single(), "Broker inbound");
-        StringAssert.Contains(logs.Single(), "local-test");
-        StringAssert.Contains(logs.Single(), "client-0");
-        StringAssert.Contains(logs.Single(), "client-1");
-        StringAssert.Contains(logs.Single(), nameof(FakeLobbyMessage));
-    }
-
-    [TestMethod]
-    public async Task DispatchEnvelopeLogsThinTransportForLobbyMessage()
-    {
-        var transport = new CapturingTransport();
-        var logs = new List<string>();
-        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport, logs.Add);
-
-        await service.DispatchEnvelopeAsync(EnvelopeForMessage(
-            "client-0",
-            targetClientId: "client-1",
-            new LobbyPlayerSetReadyMessage { ready = true },
-            sequence: 1),
-            CancellationToken.None);
-
-        Assert.IsTrue(logs.Any(log => log.Contains("Broker thin transport inbound lobby message", StringComparison.Ordinal)
-            && log.Contains(nameof(LobbyPlayerSetReadyMessage), StringComparison.Ordinal)));
+        var inboundLog = logs.Single(log => log.Contains("Broker inbound", StringComparison.Ordinal));
+        StringAssert.Contains(inboundLog, "local-test");
+        StringAssert.Contains(inboundLog, "client-0");
+        StringAssert.Contains(inboundLog, "client-1");
+        StringAssert.Contains(inboundLog, nameof(FakeLobbyMessage));
     }
 
     [TestMethod]
@@ -600,29 +426,6 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
-    public async Task UpdateLogsInboundEnvelopeWithoutRegisteredHandler()
-    {
-        var transport = new QueuedTransport();
-        var logs = new List<string>();
-        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport, logs.Add);
-
-        var loop = service.RunReceiveLoopAsync(CancellationToken.None);
-        await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
-            "local-test",
-            "client-0",
-            targetClientId: "client-1",
-            new FakeLobbyMessage("logs"),
-            sequence: 1));
-        await Task.Delay(50);
-        service.Update();
-        await transport.CompleteAsync();
-        await loop.WaitAsync(TimeSpan.FromSeconds(1));
-
-        Assert.IsTrue(logs.Any(log => log.Contains("Broker inbound skipped", StringComparison.Ordinal)
-            && log.Contains("reason=no registered handler", StringComparison.Ordinal)));
-    }
-
-    [TestMethod]
     public void RegisterMessageHandlerLogsMessageTypeAndCount()
     {
         var transport = new CapturingTransport();
@@ -637,7 +440,7 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
-    public async Task LobbyStateReceivedBeforeHandlerRegistrationFlushesAfterReady()
+    public async Task InboundEnvelopeWaitsForExactHandlerRegistration()
     {
         var transport = new QueuedTransport();
         var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
@@ -651,8 +454,6 @@ public sealed class BrokerBackedNetServiceTests
         await transport.QueueEnvelopeAsync(envelope);
         await Task.Delay(50);
         service.Update();
-        service.MarkLobbyReady();
-        service.Update();
 
         var receivedCount = 0;
         service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>(_ => receivedCount++);
@@ -664,7 +465,7 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
-    public async Task DuplicateLobbyStateDispatchesInFifoOrder()
+    public async Task DuplicateInboundMessagesDispatchInFifoOrder()
     {
         var transport = new QueuedTransport();
         var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
@@ -675,7 +476,6 @@ public sealed class BrokerBackedNetServiceTests
             sequence: 1);
         var receivedCount = 0;
         service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>((_, _) => receivedCount++);
-        service.MarkLobbyReady();
 
         var loop = service.RunReceiveLoopAsync(CancellationToken.None);
         await transport.QueueEnvelopeAsync(envelope);
@@ -689,13 +489,11 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
-    public async Task EarlyJoinResponseAndCharacterStateFlushAfterLobbyReady()
+    public async Task EarlyJoinResponseAndCharacterStateFlushAfterHandlersRegister()
     {
         var transport = new QueuedTransport();
         var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
         var receivedTypes = new List<string>();
-        service.RegisterMessageHandler<ClientLobbyJoinResponseMessage>(_ => receivedTypes.Add(nameof(ClientLobbyJoinResponseMessage)));
-        service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>(_ => receivedTypes.Add(nameof(LobbyPlayerSetReadyMessage)));
 
         var loop = service.RunReceiveLoopAsync(CancellationToken.None);
         await transport.QueueEnvelopeAsync(EnvelopeForMessage(
@@ -713,7 +511,8 @@ public sealed class BrokerBackedNetServiceTests
 
         Assert.AreEqual(0, receivedTypes.Count);
 
-        service.MarkLobbyReady();
+        service.RegisterMessageHandler<ClientLobbyJoinResponseMessage>(_ => receivedTypes.Add(nameof(ClientLobbyJoinResponseMessage)));
+        service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>(_ => receivedTypes.Add(nameof(LobbyPlayerSetReadyMessage)));
         service.Update();
         await transport.CompleteAsync();
         await loop.WaitAsync(TimeSpan.FromSeconds(1));
@@ -724,29 +523,6 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
-    public async Task ClientCharacterStateIsNotSuppressedWithoutJoinResponseHandler()
-    {
-        var transport = new QueuedTransport();
-        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
-
-        var loop = service.RunReceiveLoopAsync(CancellationToken.None);
-        await transport.QueueEnvelopeAsync(EnvelopeForMessage(
-            "client-0",
-            targetClientId: "client-1",
-            new ClientLobbyJoinResponseMessage { playersInLobby = [], modifiers = [] },
-            sequence: 1));
-        await Task.Delay(50);
-        service.MarkLobbyReady();
-        service.Update();
-
-        var suppressed = IsOutboundSuppressed(service, CreateUninitializedCharacterChange(), out var reason);
-        await transport.CompleteAsync();
-        await loop.WaitAsync(TimeSpan.FromSeconds(1));
-
-        Assert.IsFalse(suppressed, reason);
-    }
-
-    [TestMethod]
     public async Task OutboundDuringRemoteStateDispatchIsAllowed()
     {
         var transport = new QueuedTransport();
@@ -754,7 +530,6 @@ public sealed class BrokerBackedNetServiceTests
         BrokerBackedNetService? service = null;
         service = new BrokerBackedNetService("local-test", "client-1", 1, transport, logs.Add);
         service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>(_ => service.SendMessage(new LobbyPlayerSetReadyMessage()));
-        service.MarkLobbyReady();
 
         var loop = service.RunReceiveLoopAsync(CancellationToken.None);
         await transport.QueueEnvelopeAsync(EnvelopeForMessage(
@@ -856,6 +631,98 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task HostDispatchRebroadcastsClientBroadcastToReadyPeers()
+    {
+        var transport = new CapturingTransport(
+        [
+            new BrokerClientRegistrationInfo("client-2", Runtime.BrokerClientRole.Client, 2),
+            new BrokerClientRegistrationInfo("client-3", Runtime.BrokerClientRole.Client, 3)
+        ]);
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-0",
+            clientIndex: 0,
+            role: Runtime.BrokerClientRole.Host,
+            transport: transport);
+        LobbyPlayerSetReadyMessage? received = null;
+        ulong? senderId = null;
+        service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>((message, sender) =>
+        {
+            received = message;
+            senderId = sender;
+        });
+        service.SetPeerReadyForBroadcasting(BrokerPlayerId.ForClientIndex(2));
+        var envelope = EnvelopeForMessage(
+            "client-1",
+            targetClientId: null,
+            new LobbyPlayerSetReadyMessage { ready = true },
+            sequence: 42);
+
+        await service.DispatchEnvelopeAsync(envelope, CancellationToken.None);
+
+        Assert.IsNotNull(received);
+        Assert.IsTrue(received.Value.ready);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), senderId);
+        var forwarded = transport.Sent.Single();
+        Assert.AreEqual(envelope.SessionId, forwarded.SessionId);
+        Assert.AreEqual("client-1", forwarded.SourceClientId);
+        Assert.AreEqual("client-2", forwarded.TargetClientId);
+        Assert.AreEqual(envelope.MessageType, forwarded.MessageType);
+        CollectionAssert.AreEqual(envelope.Payload, forwarded.Payload);
+        Assert.AreEqual(42, forwarded.Sequence);
+    }
+
+    [TestMethod]
+    public async Task HostDispatchDoesNotRebroadcastNonBroadcastNetMessages()
+    {
+        var transport = new CapturingTransport(
+        [
+            new BrokerClientRegistrationInfo("client-2", Runtime.BrokerClientRole.Client, 2)
+        ]);
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-0",
+            clientIndex: 0,
+            role: Runtime.BrokerClientRole.Host,
+            transport: transport);
+        service.RegisterMessageHandler<ClientLobbyJoinResponseMessage>(_ => { });
+        service.SetPeerReadyForBroadcasting(BrokerPlayerId.ForClientIndex(2));
+
+        await service.DispatchEnvelopeAsync(EnvelopeForMessage(
+            "client-1",
+            targetClientId: null,
+            new ClientLobbyJoinResponseMessage { playersInLobby = [], modifiers = [] },
+            sequence: 43), CancellationToken.None);
+
+        Assert.AreEqual(0, transport.Sent.Count);
+    }
+
+    [TestMethod]
+    public async Task ClientDispatchDoesNotRebroadcastClientBroadcastMessages()
+    {
+        var transport = new CapturingTransport(
+        [
+            new BrokerClientRegistrationInfo("client-2", Runtime.BrokerClientRole.Client, 2)
+        ]);
+        var service = new BrokerBackedNetService(
+            sessionId: "local-test",
+            clientId: "client-0",
+            clientIndex: 0,
+            role: Runtime.BrokerClientRole.Client,
+            transport: transport);
+        service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>((_, _) => { });
+        service.SetPeerReadyForBroadcasting(BrokerPlayerId.ForClientIndex(2));
+
+        await service.DispatchEnvelopeAsync(EnvelopeForMessage(
+            "client-1",
+            targetClientId: null,
+            new LobbyPlayerSetReadyMessage { ready = true },
+            sequence: 44), CancellationToken.None);
+
+        Assert.AreEqual(0, transport.Sent.Count);
+    }
+
+    [TestMethod]
     public void ClientServiceDoesNotAssumeClientZeroIsConnectedHost()
     {
         var service = new BrokerBackedNetService(
@@ -917,16 +784,6 @@ public sealed class BrokerBackedNetServiceTests
         }
     }
 
-    private static LobbyPlayerChangedCharacterMessage CreateUninitializedCharacterChange()
-    {
-        var concreteCharacterType = typeof(CharacterModel).Assembly.GetTypes()
-            .First(type => !type.IsAbstract && typeof(CharacterModel).IsAssignableFrom(type));
-        return new LobbyPlayerChangedCharacterMessage
-        {
-            character = (CharacterModel)RuntimeHelpers.GetUninitializedObject(concreteCharacterType)
-        };
-    }
-
     private static Runtime.BrokerEnvelope EnvelopeFor<T>(string sourceClientId, string? targetClientId, long sequence)
     {
         return new Runtime.BrokerEnvelope(
@@ -948,95 +805,16 @@ public sealed class BrokerBackedNetServiceTests
             sequence);
     }
 
-    private static object CreateSyncPlayerDataMessage(ulong playerNetId)
-    {
-        var messageType = typeof(PeerInputMessage).Assembly.GetType(
-            "MegaCrit.Sts2.Core.Multiplayer.Messages.Game.SyncPlayerDataMessage",
-            throwOnError: true)!;
-        var playerMember = FindFieldOrProperty(messageType, "player")
-            ?? throw new MissingMemberException(messageType.FullName, "player");
-        var playerType = GetMemberType(playerMember);
-        var message = RuntimeHelpers.GetUninitializedObject(messageType);
-        var player = RuntimeHelpers.GetUninitializedObject(playerType);
-
-        SetFieldOrProperty(player, "NetId", playerNetId);
-        SetFieldOrProperty(message, "player", player);
-        return message;
-    }
-
-    private static bool IsOutboundSuppressed<T>(BrokerBackedNetService service, T message, out string reason)
-    {
-        var method = typeof(BrokerBackedNetService)
-            .GetMethod("ShouldSuppressOutboundMessage", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingMethodException(nameof(BrokerBackedNetService), "ShouldSuppressOutboundMessage");
-        object?[] args = [message, null];
-        var suppressed = (bool)method.MakeGenericMethod(typeof(T)).Invoke(service, args)!;
-        reason = (string)(args[1] ?? string.Empty);
-        return suppressed;
-    }
-
-    private static bool IsOutboundSuppressed(BrokerBackedNetService service, object message, out string reason)
-    {
-        var method = typeof(BrokerBackedNetService)
-            .GetMethod("ShouldSuppressOutboundMessage", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingMethodException(nameof(BrokerBackedNetService), "ShouldSuppressOutboundMessage");
-        object?[] args = [message, null];
-        var suppressed = (bool)method.MakeGenericMethod(message.GetType()).Invoke(service, args)!;
-        reason = (string)(args[1] ?? string.Empty);
-        return suppressed;
-    }
-
-    private static void InspectInboundBeginRunPlayerOrder(BrokerBackedNetService service, object message)
-    {
-        var method = typeof(BrokerBackedNetService)
-            .GetMethod("InspectInboundBeginRunPlayerOrder", BindingFlags.Instance | BindingFlags.NonPublic)
-            ?? throw new MissingMethodException(nameof(BrokerBackedNetService), "InspectInboundBeginRunPlayerOrder");
-        method.Invoke(service, [message]);
-    }
-
-    private static MemberInfo? FindFieldOrProperty(Type type, string name)
-    {
-        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-        return (MemberInfo?)type.GetField(name, flags)
-            ?? type.GetProperty(name, flags);
-    }
-
-    private static Type GetMemberType(MemberInfo member)
-    {
-        return member switch
-        {
-            FieldInfo field => field.FieldType,
-            PropertyInfo property => property.PropertyType,
-            _ => throw new ArgumentException($"Unsupported member {member.MemberType}.", nameof(member))
-        };
-    }
-
-    private static void SetFieldOrProperty(object instance, string name, object? value)
-    {
-        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
-        var type = instance.GetType();
-        var field = type.GetField(name, flags)
-            ?? type.GetField($"<{name}>k__BackingField", flags)
-            ?? type.GetField(char.ToLowerInvariant(name[0]) + name[1..], flags);
-        if (field is not null)
-        {
-            field.SetValue(instance, value);
-            return;
-        }
-
-        var property = type.GetProperty(name, flags);
-        if (property is not null && property.CanWrite)
-        {
-            property.SetValue(instance, value);
-            return;
-        }
-
-        throw new MissingMemberException(type.FullName, name);
-    }
-
     private sealed class CapturingTransport : IBrokerEnvelopeTransport
     {
+        public CapturingTransport(IReadOnlyList<BrokerClientRegistrationInfo>? connectedPeers = null)
+        {
+            ConnectedPeers = connectedPeers ?? [];
+        }
+
         public List<Runtime.BrokerEnvelope> Sent { get; } = [];
+
+        public IReadOnlyList<BrokerClientRegistrationInfo> ConnectedPeers { get; }
 
         public Task SendEnvelopeAsync(Runtime.BrokerEnvelope envelope, CancellationToken cancellationToken)
         {

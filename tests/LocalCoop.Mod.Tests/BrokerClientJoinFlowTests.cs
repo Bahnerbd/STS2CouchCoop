@@ -5,6 +5,7 @@ using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Runs;
 using MegaCrit.Sts2.Core.Unlocks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using System.Threading.Channels;
 
 namespace LocalCoop.Mod.Tests;
 
@@ -23,75 +24,6 @@ public sealed class BrokerClientJoinFlowTests
     }
 
     [TestMethod]
-    public void CreateStandardLobbyJoinResultContainsTwoIdentityPlayersWithoutCharacters()
-    {
-        var result = BrokerClientJoinFlow.CreateStandardLobbyJoinResult();
-
-        Assert.AreEqual(GameMode.Standard, result.gameMode);
-        Assert.AreEqual(RunSessionState.InLobby, result.sessionState);
-        Assert.IsTrue(result.joinResponse.HasValue);
-
-        var response = result.joinResponse.Value;
-        Assert.IsNotNull(response.playersInLobby);
-        Assert.AreEqual(2, response.playersInLobby.Count);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), response.playersInLobby[0].id);
-        Assert.AreEqual(0, response.playersInLobby[0].slotId);
-        Assert.IsFalse(response.playersInLobby[0].isReady);
-        Assert.IsNull(response.playersInLobby[0].character);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), response.playersInLobby[1].id);
-        Assert.AreEqual(1, response.playersInLobby[1].slotId);
-        Assert.IsFalse(response.playersInLobby[1].isReady);
-        Assert.IsNull(response.playersInLobby[1].character);
-        Assert.IsNotNull(response.modifiers);
-        Assert.AreEqual(0, response.modifiers.Count);
-    }
-
-    [TestMethod]
-    public void CreateStandardLobbyJoinResultUsesOtherClientAsTwoClientHostIdentity()
-    {
-        var factory = typeof(BrokerClientJoinFlow).GetMethod(nameof(BrokerClientJoinFlow.CreateStandardLobbyJoinResult), [typeof(int)]);
-
-        Assert.IsNotNull(factory);
-
-        var result = (JoinResult)factory!.Invoke(null, [0])!;
-        var response = result.joinResponse!.Value;
-        var players = response.playersInLobby;
-
-        Assert.IsNotNull(players);
-        Assert.AreEqual(2, players!.Count);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), players[0].id);
-        Assert.AreEqual(0, players[0].slotId);
-        Assert.IsNull(players[0].character);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), players[1].id);
-        Assert.AreEqual(1, players[1].slotId);
-        Assert.IsNull(players[1].character);
-    }
-
-    [TestMethod]
-    public void CreateStandardLobbyJoinResultCanSeedFourIdentityPlayersWithRuntimeHostFirst()
-    {
-        var result = BrokerClientJoinFlow.CreateStandardLobbyJoinResult(
-            localClientIndex: 3,
-            hostClientIndex: 2,
-            clientCount: 4);
-        var players = result.joinResponse!.Value.playersInLobby;
-
-        Assert.IsNotNull(players);
-        CollectionAssert.AreEqual(
-            new[]
-            {
-                BrokerPlayerId.ForClientIndex(2),
-                BrokerPlayerId.ForClientIndex(0),
-                BrokerPlayerId.ForClientIndex(1),
-                BrokerPlayerId.ForClientIndex(3)
-            },
-            players!.Select(player => player.id).ToArray());
-        CollectionAssert.AreEqual(new[] { 0, 1, 2, 3 }, players.Select(player => player.slotId).ToArray());
-        Assert.IsTrue(players.All(player => player.character is null));
-        Assert.IsTrue(players.All(player => !player.isReady));
-    }
-
-    [TestMethod]
     public void PlaceholderInitializerCompletesWithoutSteamConnection()
     {
         var initializer = new BrokerClientJoinFlow.PlaceholderClientConnectionInitializer();
@@ -99,6 +31,123 @@ public sealed class BrokerClientJoinFlowTests
         var result = initializer.Connect(null!, CancellationToken.None).Result;
 
         Assert.IsFalse(result.HasValue);
+    }
+
+    [TestMethod]
+    public async Task BeginStandardBrokerJoinSendsJoinRequestAndReturnsRealHostResponse()
+    {
+        var settings = Settings(BrokerClientRole.Client);
+        var transport = new QueuedTransport();
+        var response = new ClientLobbyJoinResponseMessage
+        {
+            playersInLobby = [],
+            modifiers = [],
+            seed = "HOSTSEED"
+        };
+
+        var joinTask = BrokerClientJoinFlow.BeginStandardBrokerJoinAsync(
+            settings,
+            () => transport,
+            _ => { },
+            CancellationToken.None,
+            () => BrokerClientJoinFlow.CreateJoinRequest(0, new SerializableUnlockState()));
+
+        Assert.AreEqual(0, transport.Sent.Count);
+        await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            ValidInitialGameInfo(),
+            sequence: 6));
+
+        await WaitForAsync(() => Task.FromResult(transport.Sent.Count == 1));
+        Assert.AreEqual(typeof(ClientLobbyJoinRequestMessage).AssemblyQualifiedName, transport.Sent.Single().MessageType);
+        Assert.AreEqual("client-1", transport.Sent.Single().SourceClientId);
+        Assert.IsNull(transport.Sent.Single().TargetClientId);
+
+        await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            response,
+            sequence: 7));
+
+        var result = await joinTask.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.AreEqual(GameMode.Standard, result.gameMode);
+        Assert.AreEqual(RunSessionState.InLobby, result.sessionState);
+        Assert.IsTrue(result.joinResponse.HasValue);
+        Assert.AreEqual("HOSTSEED", result.joinResponse.Value.seed);
+        Assert.AreEqual(0, result.joinResponse.Value.playersInLobby?.Count);
+        Assert.IsTrue(BrokerPendingNetGameServiceRegistry.TryTake(settings.ClientId, out var pending));
+        Assert.AreEqual(NetGameType.Client, pending!.Type);
+        pending.Dispose();
+    }
+
+    [TestMethod]
+    public async Task BeginStandardBrokerJoinReceivesJoinResponseBehindInitialGameInfo()
+    {
+        var settings = Settings(BrokerClientRole.Client);
+        var transport = new QueuedTransport();
+        using var joinCancellation = new CancellationTokenSource();
+        var response = new ClientLobbyJoinResponseMessage
+        {
+            playersInLobby = [],
+            modifiers = [],
+            seed = "HOSTSEED"
+        };
+
+        var joinTask = BrokerClientJoinFlow.BeginStandardBrokerJoinAsync(
+            settings,
+            () => transport,
+            _ => { },
+            joinCancellation.Token,
+            () => BrokerClientJoinFlow.CreateJoinRequest(0, new SerializableUnlockState()));
+
+        try
+        {
+            Assert.AreEqual(0, transport.Sent.Count);
+            await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+                "local-test",
+                "client-0",
+                targetClientId: "client-1",
+                ValidInitialGameInfo(),
+                sequence: 6));
+            await WaitForAsync(() => Task.FromResult(transport.Sent.Count == 1));
+            await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+                "local-test",
+                "client-0",
+                targetClientId: "client-1",
+                response,
+                sequence: 7));
+
+            var result = await joinTask.WaitAsync(TimeSpan.FromSeconds(1));
+
+            Assert.IsTrue(result.joinResponse.HasValue);
+            Assert.AreEqual("HOSTSEED", result.joinResponse.Value.seed);
+            Assert.IsTrue(BrokerPendingNetGameServiceRegistry.TryTake(settings.ClientId, out var pending));
+            var initialInfoCount = 0;
+            pending!.RegisterMessageHandler<InitialGameInfoMessage>((_, _) => initialInfoCount++);
+            pending.Update();
+            Assert.AreEqual(0, initialInfoCount);
+            pending.Dispose();
+        }
+        finally
+        {
+            if (!joinTask.IsCompleted)
+            {
+                await joinCancellation.CancelAsync();
+                try
+                {
+                    await joinTask;
+                }
+                catch
+                {
+                }
+            }
+
+            BrokerPendingNetGameServiceRegistry.ClearForTesting();
+        }
     }
 
     [TestMethod]
@@ -176,6 +225,19 @@ public sealed class BrokerClientJoinFlowTests
             null);
     }
 
+    private static InitialGameInfoMessage ValidInitialGameInfo()
+    {
+        return new InitialGameInfoMessage
+        {
+            version = "test",
+            idDatabaseHash = 0,
+            mods = [],
+            gameMode = GameMode.Standard,
+            sessionState = RunSessionState.InLobby,
+            connectionFailureReason = null
+        };
+    }
+
     private sealed class FakeJoinScreen
     {
         public bool VisibleState { get; private set; } = true;
@@ -238,5 +300,44 @@ public sealed class BrokerClientJoinFlowTests
         {
             VisibleState = visible;
         }
+    }
+
+    private sealed class QueuedTransport : IBrokerEnvelopeTransport
+    {
+        private readonly Channel<BrokerEnvelope?> _incoming = Channel.CreateUnbounded<BrokerEnvelope?>();
+
+        public List<BrokerEnvelope> Sent { get; } = [];
+
+        public Task SendEnvelopeAsync(BrokerEnvelope envelope, CancellationToken cancellationToken)
+        {
+            Sent.Add(envelope);
+            return Task.CompletedTask;
+        }
+
+        public async Task<BrokerEnvelope?> ReceiveEnvelopeAsync(CancellationToken cancellationToken)
+        {
+            return await _incoming.Reader.ReadAsync(cancellationToken);
+        }
+
+        public async Task QueueEnvelopeAsync(BrokerEnvelope envelope)
+        {
+            await _incoming.Writer.WriteAsync(envelope);
+        }
+    }
+
+    private static async Task WaitForAsync(Func<Task<bool>> condition)
+    {
+        var deadline = DateTimeOffset.UtcNow.AddSeconds(1);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (await condition())
+            {
+                return;
+            }
+
+            await Task.Delay(10);
+        }
+
+        Assert.Fail("Condition was not satisfied before timeout.");
     }
 }

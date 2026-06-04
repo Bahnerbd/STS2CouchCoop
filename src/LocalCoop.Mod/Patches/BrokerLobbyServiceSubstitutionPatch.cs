@@ -57,25 +57,6 @@ public static class BrokerLobbyServiceSubstitutionPatch
         }
     }
 
-    public static void Postfix(object[] __args)
-    {
-        var settings = LoadSettings();
-        if (!settings.Enabled)
-        {
-            return;
-        }
-
-        var log = new BrokerEventLog(settings.EventLogPath);
-        try
-        {
-            BrokerLobbyServiceSubstitution.MarkBrokerLobbyReady(__args, log.Write);
-        }
-        catch (Exception exception)
-        {
-            log.Write($"Broker lobby service readiness failed: {exception.GetType().Name}: {exception.Message}");
-        }
-    }
-
     private static IBrokerEnvelopeTransport CreateTransport(BrokerModeSettings settings, BrokerClientRole effectiveRole)
     {
         var config = BrokerLobbyServiceSubstitution.CreateRegistrationConfig(settings, effectiveRole);

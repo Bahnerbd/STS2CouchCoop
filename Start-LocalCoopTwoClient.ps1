@@ -7,6 +7,7 @@ param(
     [string]$DefaultHost = '127.0.0.1',
     [int]$DefaultPort = 38989,
     [int]$BrokerStartupTimeoutSeconds = 60,
+    [switch]$ReuseExistingBroker,
     [switch]$SkipClientLaunch,
     [switch]$NoWaitForBroker
 )
@@ -88,7 +89,7 @@ function Format-LocalCoopBrokerArgumentList {
         [int]$Port
     )
 
-    @('src\LocalCoop.Broker.Cli\bin\Debug\net9.0\LocalCoop.Broker.Cli.dll', $SessionId, $Port.ToString())
+    @('src\LocalCoop.Broker.Cli\bin\Debug\net9.0-launch\LocalCoop.Broker.Cli.dll', $SessionId, $Port.ToString())
 }
 
 function Test-LocalCoopTcpPort {
@@ -264,7 +265,7 @@ function Invoke-LocalCoopBrokerBuild {
 
     Push-Location -LiteralPath $RepoRoot
     try {
-        $buildOutput = & dotnet build 'src\LocalCoop.Broker.Cli\LocalCoop.Broker.Cli.csproj' --no-restore 2>&1
+        $buildOutput = & dotnet build 'src\LocalCoop.Broker.Cli\LocalCoop.Broker.Cli.csproj' --no-restore '-p:OutputPath=bin\Debug\net9.0-launch\' 2>&1
         foreach ($line in $buildOutput) {
             Write-Host $line
         }
@@ -275,6 +276,123 @@ function Invoke-LocalCoopBrokerBuild {
     }
     finally {
         Pop-Location
+    }
+}
+
+function Get-LocalCoopExistingBrokerProcessIds {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$HostName,
+        [Parameter(Mandatory = $true)]
+        [int]$Port
+    )
+
+    $ids = [System.Collections.Generic.HashSet[int]]::new()
+
+    try {
+        $connections = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
+        foreach ($connection in $connections) {
+            if ($connection.OwningProcess -gt 0) {
+                [void]$ids.Add([int]$connection.OwningProcess)
+            }
+        }
+    }
+    catch {
+    }
+
+    if ($ids.Count -eq 0) {
+        try {
+            $netstatOutput = & netstat.exe -ano -p tcp 2>$null
+            foreach ($line in $netstatOutput) {
+                if ($line -notmatch 'LISTENING') {
+                    continue
+                }
+
+                $columns = $line -split '\s+' | Where-Object { $_.Length -gt 0 }
+                if ($columns.Count -lt 5) {
+                    continue
+                }
+
+                $localAddress = $columns[1]
+                $processIdText = $columns[-1]
+                if ($localAddress -notmatch (":{0}$" -f $Port)) {
+                    continue
+                }
+
+                $processId = 0
+                if ([int]::TryParse($processIdText, [ref]$processId) -and $processId -gt 0) {
+                    [void]$ids.Add($processId)
+                }
+            }
+        }
+        catch {
+        }
+    }
+
+    $resolvedRepoRoot = $RepoRoot
+    try {
+        $resolvedRepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
+    }
+    catch {
+    }
+
+    $escapedRepoRoot = [System.Management.Automation.WildcardPattern]::Escape($resolvedRepoRoot)
+    $brokerProcesses = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $commandLine = $_.CommandLine
+            -not [string]::IsNullOrWhiteSpace($commandLine) -and
+                (
+                    ($commandLine -like '*LocalCoop.Broker.Cli*' -and $commandLine -like "*$escapedRepoRoot*") -or
+                    ($commandLine -like '*start-broker-*' -and $commandLine -like "*$escapedRepoRoot*")
+                )
+        }
+
+    foreach ($process in $brokerProcesses) {
+        if ($process.ProcessId -gt 0) {
+            [void]$ids.Add([int]$process.ProcessId)
+        }
+    }
+
+    foreach ($id in $ids) {
+        $id
+    }
+}
+
+function Stop-LocalCoopExistingBrokers {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$HostName,
+        [Parameter(Mandatory = $true)]
+        [int]$Port
+    )
+
+    $processIds = Get-LocalCoopExistingBrokerProcessIds `
+        -RepoRoot $RepoRoot `
+        -HostName $HostName `
+        -Port $Port
+
+    foreach ($processId in $processIds) {
+        if ($processId -eq $PID) {
+            continue
+        }
+
+        $process = Get-Process -Id $processId -ErrorAction SilentlyContinue
+        if ($process -isnot [System.Diagnostics.Process]) {
+            continue
+        }
+
+        Write-Host ("Stopping existing LocalCoop broker process id {0}." -f $processId)
+        Stop-LocalCoopProcessTree -Process $process
+    }
+
+    if (Test-LocalCoopTcpPort -HostName $HostName -Port $Port -TimeoutMilliseconds 250) {
+        throw "Could not stop existing process listening on $($HostName):$Port. Close that broker process and try again."
     }
 }
 
@@ -343,7 +461,7 @@ function Wait-LocalCoopBrokerProcess {
         $script:LocalCoopBrokerCancellationRequested = $true
     }
 
-    [Console]::CancelKeyPress += $cancelHandler
+    [Console]::add_CancelKeyPress($cancelHandler)
     try {
         while (-not $Process.HasExited) {
             if ($script:LocalCoopBrokerCancellationRequested) {
@@ -356,7 +474,7 @@ function Wait-LocalCoopBrokerProcess {
         }
     }
     finally {
-        [Console]::CancelKeyPress -= $cancelHandler
+        [Console]::remove_CancelKeyPress($cancelHandler)
         $script:LocalCoopBrokerCancellationRequested = $false
     }
 }
@@ -513,6 +631,7 @@ function Invoke-LocalCoopTwoClientStartup {
         [string]$DefaultHost = '127.0.0.1',
         [int]$DefaultPort = 38989,
         [int]$BrokerStartupTimeoutSeconds = 60,
+        [switch]$ReuseExistingBroker,
         [switch]$SkipClientLaunch,
         [switch]$NoWaitForBroker
     )
@@ -546,13 +665,29 @@ function Invoke-LocalCoopTwoClientStartup {
 
     Write-Host ("Broker config: sessionId={0} endpoint={1}:{2} source={3}" -f $broker.SessionId, $broker.Host, $broker.Port, $broker.Source)
 
-    $brokerUp = Test-LocalCoopTcpPort -HostName $broker.Host -Port $broker.Port
     $startedBrokerProcess = $null
-    if ($brokerUp) {
-        Write-Host ("Broker already listening on {0}:{1}." -f $broker.Host, $broker.Port)
+    if ($ReuseExistingBroker) {
+        $brokerUp = Test-LocalCoopTcpPort -HostName $broker.Host -Port $broker.Port
+        if ($brokerUp) {
+            Write-Host ("Broker already listening on {0}:{1}; reusing it because -ReuseExistingBroker was supplied." -f $broker.Host, $broker.Port)
+        }
+        else {
+            Write-Host ("Broker is not listening on {0}:{1}; starting it now." -f $broker.Host, $broker.Port)
+            $startedBrokerProcess = Start-LocalCoopBrokerProcess -RepoRoot $resolvedRepoRoot -SessionId $broker.SessionId -Port $broker.Port
+            Write-Host ("Started broker process id {0}." -f $startedBrokerProcess.Id)
+
+            if (-not (Wait-LocalCoopBroker -HostName $broker.Host -Port $broker.Port -TimeoutSeconds $BrokerStartupTimeoutSeconds)) {
+                throw "Broker did not start listening on $($broker.Host):$($broker.Port) within $BrokerStartupTimeoutSeconds seconds."
+            }
+        }
     }
     else {
-        Write-Host ("Broker is not listening on {0}:{1}; starting it now." -f $broker.Host, $broker.Port)
+        Stop-LocalCoopExistingBrokers `
+            -RepoRoot $resolvedRepoRoot `
+            -HostName $broker.Host `
+            -Port $broker.Port
+
+        Write-Host ("Starting fresh broker on {0}:{1}." -f $broker.Host, $broker.Port)
         $startedBrokerProcess = Start-LocalCoopBrokerProcess -RepoRoot $resolvedRepoRoot -SessionId $broker.SessionId -Port $broker.Port
         Write-Host ("Started broker process id {0}." -f $startedBrokerProcess.Id)
 

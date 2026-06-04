@@ -10,17 +10,13 @@ public static class LocalCoopPatchInstaller
     [
         typeof(BrokerClientJoinFlowPatch),
         typeof(BrokerJoinFriendScreenPatch),
-        typeof(BrokerClientLobbyHandshakePatch),
         typeof(BrokerLobbyServiceSubstitutionPatch),
         typeof(BrokerBeginRunPatch),
-        typeof(SteamControllerInputSelectionPatches),
-        typeof(ControllerInputOwnershipPatches),
-        typeof(CharacterSelectInputDiagnosticsPatches),
-        typeof(LobbyLifecycleDiagnosticsPatches),
-        typeof(RunTransitionTaskDiagnosticsPatches),
-        typeof(RunTransitionVoidDiagnosticsPatches),
-        typeof(PlayerChoiceDiagnosticsPatches),
-        typeof(NetServiceDiagnosticsPatches)
+        typeof(RunIdentityVoidDiagnosticsPatches),
+        typeof(RunIdentityLaunchDiagnosticsPatches),
+        typeof(CombatSyncVoidDiagnosticsPatches),
+        typeof(CombatSyncWaitDiagnosticsPatches),
+        typeof(PlayerChoiceDiagnosticsPatches)
     ];
 
     public static IReadOnlyList<Type> DefaultPatchTypesForTesting => DefaultPatchTypes;
