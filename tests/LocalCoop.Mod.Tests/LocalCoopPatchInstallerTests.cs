@@ -8,7 +8,7 @@ namespace LocalCoop.Mod.Tests;
 public sealed class LocalCoopPatchInstallerTests
 {
     [TestMethod]
-    public void DefaultPatchTypesContainCommunicationBridgeAndFocusedDiagnosticsPatches()
+    public void DefaultPatchTypesContainCommunicationBridgePatches()
     {
         CollectionAssert.AreEqual(
             new[]
@@ -17,37 +17,18 @@ public sealed class LocalCoopPatchInstallerTests
                 typeof(LocalCoop.Mod.Patches.BrokerJoinFriendScreenPatch),
                 typeof(LocalCoop.Mod.Patches.BrokerLobbyServiceSubstitutionPatch),
                 typeof(LocalCoop.Mod.Patches.BrokerBeginRunPatch),
-                typeof(LocalCoop.Mod.Patches.RunIdentityVoidDiagnosticsPatches),
-                typeof(LocalCoop.Mod.Patches.RunIdentityLaunchDiagnosticsPatches),
-                typeof(LocalCoop.Mod.Patches.CombatSyncVoidDiagnosticsPatches),
-                typeof(LocalCoop.Mod.Patches.CombatSyncWaitDiagnosticsPatches),
-                typeof(LocalCoop.Mod.Patches.PlayerChoiceDiagnosticsPatches)
+                typeof(LocalCoop.Mod.Patches.RunIdentityLaunchPatch)
             },
             LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray());
     }
 
     [TestMethod]
-    public void DefaultPatchTypesDoNotContainGlobalGetNodeDiagnosticsPatch()
+    public void DefaultPatchTypesDoNotContainDiagnosticsPatches()
     {
-        CollectionAssert.DoesNotContain(
-            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.PlayerChoiceGetNodeDiagnosticsPatches));
-    }
-
-    [TestMethod]
-    public void DefaultPatchTypesDoNotContainRelicHolderTranspilerProbe()
-    {
-        CollectionAssert.DoesNotContain(
-            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.PlayerChoiceRelicHolderReadyProbePatches));
-    }
-
-    [TestMethod]
-    public void DefaultPatchTypesDoNotContainRelicNodeBreadcrumbs()
-    {
-        CollectionAssert.DoesNotContain(
-            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray(),
-            typeof(LocalCoop.Mod.Patches.PlayerChoiceRelicNodeBreadcrumbPatches));
+        Assert.IsFalse(LocalCoopPatchInstaller.DefaultPatchTypesForTesting.Any(type =>
+            type.Name.Contains("Diagnostics", StringComparison.Ordinal)
+            || type.Name.Contains("Probe", StringComparison.Ordinal)
+            || type.Name.Contains("Breadcrumb", StringComparison.Ordinal)));
     }
 
     [TestMethod]

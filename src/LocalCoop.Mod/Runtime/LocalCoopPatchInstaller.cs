@@ -12,11 +12,7 @@ public static class LocalCoopPatchInstaller
         typeof(BrokerJoinFriendScreenPatch),
         typeof(BrokerLobbyServiceSubstitutionPatch),
         typeof(BrokerBeginRunPatch),
-        typeof(RunIdentityVoidDiagnosticsPatches),
-        typeof(RunIdentityLaunchDiagnosticsPatches),
-        typeof(CombatSyncVoidDiagnosticsPatches),
-        typeof(CombatSyncWaitDiagnosticsPatches),
-        typeof(PlayerChoiceDiagnosticsPatches)
+        typeof(RunIdentityLaunchPatch)
     ];
 
     public static IReadOnlyList<Type> DefaultPatchTypesForTesting => DefaultPatchTypes;
