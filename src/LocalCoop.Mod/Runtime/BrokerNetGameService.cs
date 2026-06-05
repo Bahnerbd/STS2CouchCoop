@@ -10,6 +10,8 @@ namespace LocalCoop.Mod.Runtime;
 
 public sealed class BrokerNetGameService : INetHostGameService, IDisposable
 {
+    private static readonly AsyncLocal<int> NativeMessageHandlerDispatchDepth = new();
+
     private readonly BrokerBackedNetService _inner;
     private readonly NetGameType _type;
     private readonly CancellationTokenSource _receiveLoopCancellation = new();
@@ -39,6 +41,10 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
     public NetGameType Type => _type;
 
     public PlatformType Platform => PlatformType.None;
+
+    internal static bool IsDispatchingNativeMessageHandler => NativeMessageHandlerDispatchDepth.Value > 0;
+
+    public static bool IsDispatchingNativeMessageHandlerForTesting => IsDispatchingNativeMessageHandler;
 
     public IReadOnlyList<NetClientData> ConnectedPeers =>
         _inner.ConnectedPeers
@@ -161,6 +167,11 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
         _receiveLoopCancellation.Dispose();
     }
 
+    public static IDisposable EnterNativeMessageHandlerDispatchForTesting()
+    {
+        return EnterNativeMessageHandlerDispatch();
+    }
+
     private void HandlePeerTracked(ulong peerId)
     {
         NotifyClientConnected(peerId);
@@ -195,12 +206,34 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
         LocalContext.NetId = NetId;
         try
         {
+            using var dispatchScope = EnterNativeMessageHandlerDispatch();
             handler();
         }
         finally
         {
             LocalContext.NetId = NetId;
             RunIdentityDiagnostics.LogBrokerHandler("exit", NetId, Type, messageType, senderId, message);
+        }
+    }
+
+    private static IDisposable EnterNativeMessageHandlerDispatch()
+    {
+        NativeMessageHandlerDispatchDepth.Value++;
+        return new NativeMessageHandlerDispatchScope();
+    }
+
+    private sealed class NativeMessageHandlerDispatchScope : IDisposable
+    {
+        private int _disposed;
+
+        public void Dispose()
+        {
+            if (Interlocked.Exchange(ref _disposed, 1) != 0)
+            {
+                return;
+            }
+
+            NativeMessageHandlerDispatchDepth.Value = Math.Max(0, NativeMessageHandlerDispatchDepth.Value - 1);
         }
     }
 }

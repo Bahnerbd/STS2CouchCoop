@@ -13,11 +13,15 @@ public static class LocalCoopPatchInstaller
         typeof(BrokerLobbyServiceSubstitutionPatch),
         typeof(BrokerBeginRunPatch),
         typeof(RunIdentityLaunchPatch),
+        typeof(RunIdentityDualRoleAdventureVoidGuardPatch),
+        typeof(RunIdentityDualRoleAdventureBoolGuardPatch),
         typeof(RunIdentityLocalUiAlignmentPatch),
         typeof(RunIdentityRewardAlignmentPatch),
         typeof(RunIdentityPotionAnimationGuardPatch),
         typeof(RunIdentityRemoteEventUiGuardPatch),
-        typeof(RunIdentityLocalActionGuardPatch)
+        typeof(RunIdentityLocalActionGuardPatch),
+        typeof(RunIdentityRemoteMutationGuardPatch),
+        typeof(RunIdentityRemoteMutationTaskGuardPatch)
     ];
 
     private static readonly Type[] RunIdentityDiagnosticsPatchTypes =

@@ -161,6 +161,32 @@ public sealed class BrokerNetServiceFactoryTests
     }
 
     [TestMethod]
+    public async Task BrokerNetGameServiceMarksNativeHandlerDispatch()
+    {
+        var inner = new BrokerBackedNetService(
+            "local-test",
+            "client-0",
+            0,
+            new CapturingTransport());
+        using var service = new BrokerNetGameService(inner, NetGameType.Host);
+        bool? observedDispatch = null;
+        service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>((_, _) =>
+            observedDispatch = BrokerNetGameService.IsDispatchingNativeMessageHandlerForTesting);
+
+        await inner.DispatchEnvelopeAsync(
+            BrokerEnvelopeMessageSerializer.ToEnvelope(
+                "local-test",
+                "client-1",
+                targetClientId: "client-0",
+                new LobbyPlayerSetReadyMessage(),
+                sequence: 1),
+            CancellationToken.None);
+
+        Assert.AreEqual(true, observedDispatch);
+        Assert.IsFalse(BrokerNetGameService.IsDispatchingNativeMessageHandlerForTesting);
+    }
+
+    [TestMethod]
     public void BrokerNetGameServiceConnectedPeersDoesNotAssumeHostClientIndex()
     {
         var inner = new BrokerBackedNetService(

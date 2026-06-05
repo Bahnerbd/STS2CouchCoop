@@ -21,6 +21,7 @@ public static class RunIdentityLaunchPatch
                 method.Name == MethodName && method.GetParameters().Length == 0);
     }
 
+    [HarmonyPriority(Priority.First)]
     public static void Postfix(object? __instance)
     {
         AlignLocalContextForBrokerRunForTesting(__instance);

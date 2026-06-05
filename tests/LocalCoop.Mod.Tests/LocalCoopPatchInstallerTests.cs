@@ -18,11 +18,15 @@ public sealed class LocalCoopPatchInstallerTests
                 typeof(LocalCoop.Mod.Patches.BrokerLobbyServiceSubstitutionPatch),
                 typeof(LocalCoop.Mod.Patches.BrokerBeginRunPatch),
                 typeof(LocalCoop.Mod.Patches.RunIdentityLaunchPatch),
+                typeof(LocalCoop.Mod.Patches.RunIdentityDualRoleAdventureVoidGuardPatch),
+                typeof(LocalCoop.Mod.Patches.RunIdentityDualRoleAdventureBoolGuardPatch),
                 typeof(LocalCoop.Mod.Patches.RunIdentityLocalUiAlignmentPatch),
                 typeof(LocalCoop.Mod.Patches.RunIdentityRewardAlignmentPatch),
                 typeof(LocalCoop.Mod.Patches.RunIdentityPotionAnimationGuardPatch),
                 typeof(LocalCoop.Mod.Patches.RunIdentityRemoteEventUiGuardPatch),
-                typeof(LocalCoop.Mod.Patches.RunIdentityLocalActionGuardPatch)
+                typeof(LocalCoop.Mod.Patches.RunIdentityLocalActionGuardPatch),
+                typeof(LocalCoop.Mod.Patches.RunIdentityRemoteMutationGuardPatch),
+                typeof(LocalCoop.Mod.Patches.RunIdentityRemoteMutationTaskGuardPatch)
             },
             LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray());
     }
