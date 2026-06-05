@@ -17,7 +17,12 @@ public sealed class LocalCoopPatchInstallerTests
                 typeof(LocalCoop.Mod.Patches.BrokerJoinFriendScreenPatch),
                 typeof(LocalCoop.Mod.Patches.BrokerLobbyServiceSubstitutionPatch),
                 typeof(LocalCoop.Mod.Patches.BrokerBeginRunPatch),
-                typeof(LocalCoop.Mod.Patches.RunIdentityLaunchPatch)
+                typeof(LocalCoop.Mod.Patches.RunIdentityLaunchPatch),
+                typeof(LocalCoop.Mod.Patches.RunIdentityLocalUiAlignmentPatch),
+                typeof(LocalCoop.Mod.Patches.RunIdentityRewardAlignmentPatch),
+                typeof(LocalCoop.Mod.Patches.RunIdentityPotionAnimationGuardPatch),
+                typeof(LocalCoop.Mod.Patches.RunIdentityRemoteEventUiGuardPatch),
+                typeof(LocalCoop.Mod.Patches.RunIdentityLocalActionGuardPatch)
             },
             LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray());
     }
@@ -29,6 +34,28 @@ public sealed class LocalCoopPatchInstallerTests
             type.Name.Contains("Diagnostics", StringComparison.Ordinal)
             || type.Name.Contains("Probe", StringComparison.Ordinal)
             || type.Name.Contains("Breadcrumb", StringComparison.Ordinal)));
+    }
+
+    [TestMethod]
+    public void RunIdentityDiagnosticsPatchTypesAreOptInOnly()
+    {
+        Assert.IsTrue(LocalCoopPatchInstaller.RunIdentityDiagnosticsPatchTypesForTesting.Any());
+        Assert.IsFalse(LocalCoopPatchInstaller.RunIdentityDiagnosticsPatchTypesForTesting.Any(
+            LocalCoopPatchInstaller.DefaultPatchTypesForTesting.Contains));
+        Assert.IsTrue(LocalCoopPatchInstaller.RunIdentityDiagnosticsPatchTypesForTesting.All(type =>
+            type.Name.Contains("Diagnostics", StringComparison.Ordinal)));
+        CollectionAssert.Contains(
+            LocalCoopPatchInstaller.RunIdentityDiagnosticsPatchTypesForTesting.ToArray(),
+            typeof(LocalCoop.Mod.Patches.RewardDiagnosticsPatches));
+        CollectionAssert.Contains(
+            LocalCoopPatchInstaller.RunIdentityDiagnosticsPatchTypesForTesting.ToArray(),
+            typeof(LocalCoop.Mod.Patches.PotionProcurementDiagnosticsPatches));
+        CollectionAssert.Contains(
+            LocalCoopPatchInstaller.RunIdentityDiagnosticsPatchTypesForTesting.ToArray(),
+            typeof(LocalCoop.Mod.Patches.RunIdentityLocalUiDiagnosticsPatches));
+        CollectionAssert.Contains(
+            LocalCoopPatchInstaller.RunIdentityDiagnosticsPatchTypesForTesting.ToArray(),
+            typeof(LocalCoop.Mod.Patches.PeerInputOwnershipDiagnosticsPatches));
     }
 
     [TestMethod]

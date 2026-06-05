@@ -84,7 +84,8 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
     public void RegisterMessageHandler<T>(MessageHandlerDelegate<T> messageHandlerDelegate)
         where T : INetMessage
     {
-        Action<T, ulong> adapter = (message, senderId) => InvokeWithLocalContext(() => messageHandlerDelegate(message, senderId));
+        Action<T, ulong> adapter = (message, senderId) =>
+            InvokeWithLocalContext(typeof(T), senderId, message, () => messageHandlerDelegate(message, senderId));
         _registeredHandlers[messageHandlerDelegate] = adapter;
         _inner.RegisterMessageHandler(adapter);
     }
@@ -175,8 +176,22 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
         _clientConnected?.Invoke(peerId);
     }
 
-    private void InvokeWithLocalContext(Action handler)
+    private void InvokeWithLocalContext(Type messageType, ulong senderId, object? message, Action handler)
     {
+        if (messageType.Name.Contains("MerchantCardRemovalMessage", StringComparison.Ordinal))
+        {
+            RunIdentityDiagnostics.StartCorrelation("shop-remove-message");
+        }
+        else if (messageType.Name.Contains("RewardObtainedMessage", StringComparison.Ordinal))
+        {
+            RunIdentityDiagnostics.StartCorrelation("reward-message");
+        }
+        else if (messageType.Name.Contains("PlayerChoiceMessage", StringComparison.Ordinal))
+        {
+            RunIdentityDiagnostics.EnsureCorrelation("player-choice-message");
+        }
+
+        RunIdentityDiagnostics.LogBrokerHandler("enter", NetId, Type, messageType, senderId, message);
         LocalContext.NetId = NetId;
         try
         {
@@ -185,6 +200,7 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
         finally
         {
             LocalContext.NetId = NetId;
+            RunIdentityDiagnostics.LogBrokerHandler("exit", NetId, Type, messageType, senderId, message);
         }
     }
 }

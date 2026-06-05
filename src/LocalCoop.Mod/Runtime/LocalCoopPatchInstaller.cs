@@ -12,10 +12,40 @@ public static class LocalCoopPatchInstaller
         typeof(BrokerJoinFriendScreenPatch),
         typeof(BrokerLobbyServiceSubstitutionPatch),
         typeof(BrokerBeginRunPatch),
-        typeof(RunIdentityLaunchPatch)
+        typeof(RunIdentityLaunchPatch),
+        typeof(RunIdentityLocalUiAlignmentPatch),
+        typeof(RunIdentityRewardAlignmentPatch),
+        typeof(RunIdentityPotionAnimationGuardPatch),
+        typeof(RunIdentityRemoteEventUiGuardPatch),
+        typeof(RunIdentityLocalActionGuardPatch)
+    ];
+
+    private static readonly Type[] RunIdentityDiagnosticsPatchTypes =
+    [
+        typeof(RunIdentityLifecycleDiagnosticsPatches),
+        typeof(OneOffSynchronizerDiagnosticsPatches),
+        typeof(OneOffSynchronizerLocalPlayerDiagnosticsPatch),
+        typeof(CardSelectCmdDiagnosticsPatches),
+        typeof(CardSelectCmdShouldSelectLocalDiagnosticsPatch),
+        typeof(LocalContextIsMeDiagnosticsPatch),
+        typeof(PlayerChoiceSynchronizerDiagnosticsPatches),
+        typeof(RewardDiagnosticsPatches),
+        typeof(RewardStateDiagnosticsPatches),
+        typeof(PotionProcurementDiagnosticsPatches),
+        typeof(RunIdentityLocalUiDiagnosticsPatches),
+        typeof(PeerInputOwnershipDiagnosticsPatches)
     ];
 
     public static IReadOnlyList<Type> DefaultPatchTypesForTesting => DefaultPatchTypes;
+
+    public static IReadOnlyList<Type> RunIdentityDiagnosticsPatchTypesForTesting => RunIdentityDiagnosticsPatchTypes;
+
+    public static IReadOnlyList<Type> PatchTypesFor(bool includeRunIdentityDiagnostics)
+    {
+        return includeRunIdentityDiagnostics
+            ? DefaultPatchTypes.Concat(RunIdentityDiagnosticsPatchTypes).ToArray()
+            : DefaultPatchTypes;
+    }
 
     public static LocalCoopPatchInstallResult Install(
         Assembly assembly,
