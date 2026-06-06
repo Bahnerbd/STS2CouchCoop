@@ -45,4 +45,60 @@ public sealed class ClientLaunchPlanTests
         CollectionAssert.AreEqual(new[] { 0, 1 }, parsed.Select(config => config.ClientIndex).ToArray());
         CollectionAssert.AreEqual(new int?[] { 0, 1 }, parsed.Select(config => config.ControllerDevice.Device).ToArray());
     }
+
+    [TestMethod]
+    public void CreatesThreeClientBrokerConfigsWithControllerOverrides()
+    {
+        var plan = ClientLaunchPlan.Create(
+            "local-test",
+            "127.0.0.1",
+            38989,
+            clientCount: 3,
+            controllerDevices:
+            [
+                BrokerControllerDeviceAssignment.ForDevice(2),
+                BrokerControllerDeviceAssignment.None,
+                BrokerControllerDeviceAssignment.ForDevice(0)
+            ]);
+
+        CollectionAssert.AreEqual(new[] { "client-0", "client-1", "client-2" }, plan.Clients.Select(client => client.ClientId).ToArray());
+
+        var parsed = plan.Clients
+            .Select(client => BrokerClientConfig.Parse(client.ConfigContent))
+            .ToArray();
+
+        Assert.AreEqual(BrokerClientRole.Host, parsed[0].Role);
+        Assert.IsTrue(parsed.Skip(1).All(config => config.Role == BrokerClientRole.Client));
+        CollectionAssert.AreEqual(new[] { 0, 1, 2 }, parsed.Select(config => config.ClientIndex).ToArray());
+        CollectionAssert.AreEqual(new int?[] { 2, null, 0 }, parsed.Select(config => config.ControllerDevice.Device).ToArray());
+        Assert.IsTrue(parsed.All(config => config.ControllerDevice.IsConfigured));
+    }
+
+    [TestMethod]
+    public void RejectsClientCountsOutsideTwoThroughFour()
+    {
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+            ClientLaunchPlan.Create("local-test", "127.0.0.1", 38989, clientCount: 1));
+
+        Assert.ThrowsException<ArgumentOutOfRangeException>(() =>
+            ClientLaunchPlan.Create("local-test", "127.0.0.1", 38989, clientCount: 5));
+    }
+
+    [TestMethod]
+    public void RejectsControllerOverrideCountMismatch()
+    {
+        var exception = Assert.ThrowsException<ArgumentException>(() =>
+            ClientLaunchPlan.Create(
+                "local-test",
+                "127.0.0.1",
+                38989,
+                clientCount: 3,
+                controllerDevices:
+                [
+                    BrokerControllerDeviceAssignment.ForDevice(0),
+                    BrokerControllerDeviceAssignment.ForDevice(1)
+                ]));
+
+        StringAssert.Contains(exception.Message, "client count");
+    }
 }

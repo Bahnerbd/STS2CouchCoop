@@ -479,6 +479,83 @@ function Wait-LocalCoopBrokerProcess {
     }
 }
 
+function Assert-LocalCoopClientCount {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ClientCount
+    )
+
+    if ($ClientCount -lt 2 -or $ClientCount -gt 4) {
+        throw 'ClientCount must be 2 through 4.'
+    }
+}
+
+function Get-LocalCoopClientConfigDirectories {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ConfigRoot,
+        [Parameter(Mandatory = $true)]
+        [int]$ClientCount
+    )
+
+    Assert-LocalCoopClientCount -ClientCount $ClientCount
+
+    $directories = @()
+    for ($index = 0; $index -lt $ClientCount; $index++) {
+        $directories += (Join-Path $ConfigRoot ("client-{0}" -f $index))
+    }
+
+    $directories
+}
+
+function Invoke-LocalCoopClientPreparation {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$ConfigRoot,
+        [Parameter(Mandatory = $true)]
+        [int]$ClientCount,
+        [Parameter(Mandatory = $true)]
+        [string]$SessionId,
+        [Parameter(Mandatory = $true)]
+        [int]$Port,
+        [Parameter(Mandatory = $true)]
+        [string]$GameExecutablePath,
+        [string]$ControllerDevices
+    )
+
+    Assert-LocalCoopClientCount -ClientCount $ClientCount
+
+    $arguments = Format-LocalCoopHarnessPreparationArgumentList `
+        -ConfigRoot $ConfigRoot `
+        -ClientCount $ClientCount `
+        -SessionId $SessionId `
+        -Port $Port `
+        -GameExecutablePath $GameExecutablePath `
+        -ControllerDevices $ControllerDevices
+
+    Push-Location -LiteralPath $RepoRoot
+    try {
+        $prepareOutput = & dotnet @arguments 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            foreach ($line in $prepareOutput) {
+                Write-Host $line
+            }
+
+            throw "LocalCoop client harness preparation failed with exit code $LASTEXITCODE."
+        }
+
+        Write-Host ("{0}-client config prepared." -f $ClientCount)
+    }
+    finally {
+        Pop-Location
+    }
+}
+
 function Invoke-LocalCoopTwoClientPreparation {
     [CmdletBinding()]
     param(
@@ -494,28 +571,13 @@ function Invoke-LocalCoopTwoClientPreparation {
         [string]$GameExecutablePath
     )
 
-    $arguments = Format-LocalCoopHarnessPreparationArgumentList `
+    Invoke-LocalCoopClientPreparation `
+        -RepoRoot $RepoRoot `
         -ConfigRoot $ConfigRoot `
+        -ClientCount 2 `
         -SessionId $SessionId `
         -Port $Port `
         -GameExecutablePath $GameExecutablePath
-
-    Push-Location -LiteralPath $RepoRoot
-    try {
-        $prepareOutput = & dotnet @arguments 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            foreach ($line in $prepareOutput) {
-                Write-Host $line
-            }
-
-            throw "Two-client harness preparation failed with exit code $LASTEXITCODE."
-        }
-
-        Write-Host 'Two-client config prepared.'
-    }
-    finally {
-        Pop-Location
-    }
 }
 
 function Format-LocalCoopHarnessPreparationArgumentList {
@@ -523,26 +585,37 @@ function Format-LocalCoopHarnessPreparationArgumentList {
     param(
         [Parameter(Mandatory = $true)]
         [string]$ConfigRoot,
+        [int]$ClientCount = 2,
         [Parameter(Mandatory = $true)]
         [string]$SessionId,
         [Parameter(Mandatory = $true)]
         [int]$Port,
         [Parameter(Mandatory = $true)]
-        [string]$GameExecutablePath
+        [string]$GameExecutablePath,
+        [string]$ControllerDevices
     )
 
-    @(
+    Assert-LocalCoopClientCount -ClientCount $ClientCount
+
+    $arguments = @(
         'run',
         '--no-restore',
         '--project',
         'tools\LocalCoop.MultiClientHarness',
         '--',
-        'prepare-two-client',
+        'prepare-clients',
         $ConfigRoot,
+        $ClientCount.ToString(),
         $SessionId,
         $Port.ToString(),
         $GameExecutablePath
     )
+
+    if (-not [string]::IsNullOrWhiteSpace($ControllerDevices)) {
+        $arguments += $ControllerDevices
+    }
+
+    $arguments
 }
 
 function New-LocalCoopClientStartInfo {
@@ -620,13 +693,15 @@ function Clear-LocalCoopLaunchLogs {
     }
 }
 
-function Invoke-LocalCoopTwoClientStartup {
+function Invoke-LocalCoopClientStartup {
     [CmdletBinding()]
     param(
         [string]$RepoRoot = $PSScriptRoot,
         [string]$GameRoot,
         [string]$ConfigRoot,
         [string]$BrokerConfigPath,
+        [int]$ClientCount = 4,
+        [string]$ControllerDevices,
         [string]$DefaultSessionId = 'local-test',
         [string]$DefaultHost = '127.0.0.1',
         [int]$DefaultPort = 38989,
@@ -635,6 +710,8 @@ function Invoke-LocalCoopTwoClientStartup {
         [switch]$SkipClientLaunch,
         [switch]$NoWaitForBroker
     )
+
+    Assert-LocalCoopClientCount -ClientCount $ClientCount
 
     $resolvedRepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
     if ([string]::IsNullOrWhiteSpace($GameRoot)) {
@@ -696,15 +773,17 @@ function Invoke-LocalCoopTwoClientStartup {
         }
     }
 
-    Invoke-LocalCoopTwoClientPreparation `
+    Invoke-LocalCoopClientPreparation `
         -RepoRoot $resolvedRepoRoot `
         -ConfigRoot $ConfigRoot `
+        -ClientCount $ClientCount `
         -SessionId $broker.SessionId `
         -Port $broker.Port `
-        -GameExecutablePath $gameExecutablePath
+        -GameExecutablePath $gameExecutablePath `
+        -ControllerDevices $ControllerDevices
 
     if ($SkipClientLaunch) {
-        Write-Host 'Prepared two-client config; client launch skipped.'
+        Write-Host ("Prepared {0}-client config; client launch skipped." -f $ClientCount)
         if ($startedBrokerProcess -is [System.Diagnostics.Process] -and -not $NoWaitForBroker) {
             Write-Host 'Broker was started by this script. Leave this window open; press Ctrl+C to stop it.'
             Wait-LocalCoopBrokerProcess -Process $startedBrokerProcess
@@ -715,10 +794,7 @@ function Invoke-LocalCoopTwoClientStartup {
 
     Clear-LocalCoopLaunchLogs -GameRoot $GameRoot
 
-    $clientDirectories = @(
-        Join-Path $ConfigRoot 'client-0'
-        Join-Path $ConfigRoot 'client-1'
-    )
+    $clientDirectories = Get-LocalCoopClientConfigDirectories -ConfigRoot $ConfigRoot -ClientCount $ClientCount
 
     foreach ($clientDirectory in $clientDirectories) {
         if (-not (Test-Path -LiteralPath (Join-Path $clientDirectory 'enable-local-broker.txt'))) {
@@ -737,6 +813,37 @@ function Invoke-LocalCoopTwoClientStartup {
         Write-Host 'Broker was started by this script. Leave this window open while the clients are running; press Ctrl+C to stop it.'
         Wait-LocalCoopBrokerProcess -Process $startedBrokerProcess
     }
+}
+
+function Invoke-LocalCoopTwoClientStartup {
+    [CmdletBinding()]
+    param(
+        [string]$RepoRoot = $PSScriptRoot,
+        [string]$GameRoot,
+        [string]$ConfigRoot,
+        [string]$BrokerConfigPath,
+        [string]$DefaultSessionId = 'local-test',
+        [string]$DefaultHost = '127.0.0.1',
+        [int]$DefaultPort = 38989,
+        [int]$BrokerStartupTimeoutSeconds = 60,
+        [switch]$ReuseExistingBroker,
+        [switch]$SkipClientLaunch,
+        [switch]$NoWaitForBroker
+    )
+
+    Invoke-LocalCoopClientStartup `
+        -RepoRoot $RepoRoot `
+        -GameRoot $GameRoot `
+        -ConfigRoot $ConfigRoot `
+        -BrokerConfigPath $BrokerConfigPath `
+        -ClientCount 2 `
+        -DefaultSessionId $DefaultSessionId `
+        -DefaultHost $DefaultHost `
+        -DefaultPort $DefaultPort `
+        -BrokerStartupTimeoutSeconds $BrokerStartupTimeoutSeconds `
+        -ReuseExistingBroker:$ReuseExistingBroker `
+        -SkipClientLaunch:$SkipClientLaunch `
+        -NoWaitForBroker:$NoWaitForBroker
 }
 
 if ($MyInvocation.InvocationName -ne '.') {

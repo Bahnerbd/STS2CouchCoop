@@ -36,6 +36,6 @@ dotnet build src\LocalCoop.Mod\LocalCoop.Mod.csproj
 For broker smoke setup:
 
 ```powershell
-dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-two-client .localcoop-clients local-test 38989
+dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-clients .localcoop-clients 4 local-test 38989
 dotnet run --project src\LocalCoop.Broker.Cli -- local-test 38989
 ```

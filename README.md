@@ -32,7 +32,7 @@ See [AGENTS.md](AGENTS.md) for the repo's agent-facing development rules.
 ```powershell
 dotnet test LocalCoopTransport.sln --no-restore -p:OutputPath=bin\Debug\net9.0-test\
 dotnet build src\LocalCoop.Mod\LocalCoop.Mod.csproj
-dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-two-client .localcoop-clients local-test 38989
+dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-clients .localcoop-clients 4 local-test 38989
 dotnet run --project src\LocalCoop.Broker.Cli -- local-test 38989
 ```
 
@@ -50,14 +50,22 @@ sessionId=<id>
 
 `controllerDevice` is optional for compatibility. When present, STS2's Steam controller strategy is steered to the matching connected-controller ordinal for that process, and raw joypad/controller input from other devices is suppressed. Use `controllerDevice=none` for keyboard-only processes.
 
-## Manual Two-Client Smoke
+## Manual Four-Client Smoke
 
 1. Remove stale `enable-local-injection.txt` from `mods\LocalCoop` if present; this clean branch does not use it.
 2. Generate per-client configs:
 
 ```powershell
-dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-two-client .localcoop-clients local-test 38989
+dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-clients .localcoop-clients 4 local-test 38989
 ```
+
+For a one-command launcher that starts a fresh broker, prepares configs, and launches clients, use:
+
+```powershell
+.\Start-LocalCoopClients.ps1 -ClientCount 4 -ControllerDevices '0,1,2,3'
+```
+
+The controller list is optional. By default, client index maps to controller device index. Use `none` for a client with no assigned controller, for example `-ControllerDevices '0,1,none,3'`.
 
 3. Start the broker:
 
@@ -66,11 +74,17 @@ dotnet run --project src\LocalCoop.Broker.Cli -- local-test 38989
 ```
 
 4. Launch STS2 from Steam for the host path using the generated `client-0` config directory.
-5. Launch STS2 from Steam for the client path using the generated `client-1` config directory.
+5. Launch STS2 from Steam for the client paths using the generated `client-1`, `client-2`, and `client-3` config directories.
 6. Inspect these files under `mods\LocalCoop`:
    - `localcoop-host-0-events.txt`
    - `localcoop-client-1-events.txt`
+   - `localcoop-client-2-events.txt`
+   - `localcoop-client-3-events.txt`
    - `localcoop-transport-probe-client-0.txt`
    - `localcoop-transport-probe-client-1.txt`
+   - `localcoop-transport-probe-client-2.txt`
+   - `localcoop-transport-probe-client-3.txt`
 
 Expected evidence is native lobby message flow over the broker: broker mode enabled, lifecycle entry logs, thin transport lobby message logs, and no `Broker replay outbound`, pending character flush, or lobby-state coalescing.
+
+`prepare-two-client` and `Start-LocalCoopTwoClient.ps1` remain available as two-client compatibility entrypoints for regression smoke runs.

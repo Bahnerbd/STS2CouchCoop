@@ -23,11 +23,11 @@ The broker and mod should not become a second lobby implementation. Preserve and
 ```powershell
 dotnet test LocalCoopTransport.sln --no-restore -p:OutputPath=bin\Debug\net9.0-test\
 dotnet build src\LocalCoop.Mod\LocalCoop.Mod.csproj
-dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-two-client .localcoop-clients local-test 38989
+dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-clients .localcoop-clients 4 local-test 38989
 dotnet run --project src\LocalCoop.Broker.Cli -- local-test 38989
 ```
 
-Manual smoke should start fresh broker/session state, launch the host path first, then launch the join path. Acceptance evidence is native lobby message flow in logs and consistent UI behavior, not broker-side fabricated state.
+Manual smoke should start fresh broker/session state, launch the host path first, then launch each join path. For the current four-client milestone, acceptance evidence is host plus three clients joining the native lobby, selecting characters, readying, and entering a run through native lobby message flow, not broker-side fabricated state.
 
 ## Debugging Checklist
 
@@ -36,4 +36,3 @@ Manual smoke should start fresh broker/session state, launch the host path first
 - Confirm broker registration, route targets, and sender ids before changing message handling.
 - If a crash happens, read the exact exception in `godot.log` before patching.
 - If a fix requires manual lobby state, stop and look for a thinner transport seam first.
-

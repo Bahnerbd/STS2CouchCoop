@@ -9,14 +9,18 @@ public static class TwoClientHarnessPreparation
         string brokerHost,
         int brokerPort)
     {
-        var plan = ClientLaunchPlan.CreateTwoClient(sessionId, brokerHost, brokerPort);
-        var setup = ClientConfigFileSetup.Write(rootDirectory, plan);
-        var launchCommands = ClientLaunchInstructionFormatter.FormatPowerShell(setup, gameExecutablePath);
+        var result = ClientHarnessPreparation.Prepare(
+            rootDirectory,
+            gameExecutablePath,
+            sessionId,
+            brokerHost,
+            brokerPort,
+            clientCount: 2);
 
         return new TwoClientHarnessPreparationResult(
-            setup,
-            $"dotnet run --project src\\LocalCoop.Broker.Cli -- {sessionId} {brokerPort}",
-            launchCommands);
+            result.ConfigSetup,
+            result.BrokerCommand,
+            result.LaunchCommands);
     }
 }
 

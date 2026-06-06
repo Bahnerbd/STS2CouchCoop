@@ -1,3 +1,5 @@
+using LocalCoop.Protocol;
+
 namespace LocalCoop.MultiClientHarness;
 
 public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clients)
@@ -12,7 +14,12 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
         return Create(sessionId, brokerHost, brokerPort, clientCount: 2);
     }
 
-    private static ClientLaunchPlan Create(string sessionId, string brokerHost, int brokerPort, int clientCount)
+    public static ClientLaunchPlan Create(
+        string sessionId,
+        string brokerHost,
+        int brokerPort,
+        int clientCount,
+        IReadOnlyList<BrokerControllerDeviceAssignment>? controllerDevices = null)
     {
         if (string.IsNullOrWhiteSpace(sessionId))
         {
@@ -34,6 +41,11 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
             throw new ArgumentOutOfRangeException(nameof(clientCount), "Client count must be 2 through 4.");
         }
 
+        if (controllerDevices is not null && controllerDevices.Count != clientCount)
+        {
+            throw new ArgumentException("Controller device override count must match client count.", nameof(controllerDevices));
+        }
+
         return new ClientLaunchPlan(
             Enumerable.Range(0, clientCount)
                 .Select(index => new ClientLaunchPlanEntry(
@@ -41,7 +53,7 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
                     ConfigContent: FormatConfig(
                         role: index == 0 ? "host" : "client",
                         clientIndex: index,
-                        controllerDevice: index,
+                        controllerDevice: controllerDevices?[index] ?? BrokerControllerDeviceAssignment.ForDevice(index),
                         brokerHost,
                         brokerPort,
                         sessionId)))
@@ -51,7 +63,7 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
     private static string FormatConfig(
         string role,
         int clientIndex,
-        int controllerDevice,
+        BrokerControllerDeviceAssignment controllerDevice,
         string brokerHost,
         int brokerPort,
         string sessionId)
@@ -60,10 +72,20 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
             Environment.NewLine,
             $"role={role}",
             $"clientIndex={clientIndex}",
-            $"controllerDevice={controllerDevice}",
+            $"controllerDevice={FormatControllerDevice(controllerDevice)}",
             $"endpoint={brokerHost}:{brokerPort}",
             $"sessionId={sessionId}",
             string.Empty);
+    }
+
+    private static string FormatControllerDevice(BrokerControllerDeviceAssignment controllerDevice)
+    {
+        if (!controllerDevice.IsConfigured)
+        {
+            return "none";
+        }
+
+        return controllerDevice.Device?.ToString() ?? "none";
     }
 }
 

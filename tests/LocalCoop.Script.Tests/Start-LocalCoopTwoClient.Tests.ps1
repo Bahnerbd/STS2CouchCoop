@@ -110,12 +110,13 @@ try {
         '--project',
         'tools\LocalCoop.MultiClientHarness',
         '--',
-        'prepare-two-client',
+        'prepare-clients',
         '.localcoop-clients',
+        '2',
         'local-test5',
         '38993',
         'D:\SteamLibrary\steamapps\common\Slay the Spire 2\SlayTheSpire2.exe'
-    ) 'Harness preparation should avoid implicit restore.'
+    ) 'Harness preparation should avoid implicit restore and use the generalized client command.'
 
     $brokerStartInfo = New-LocalCoopBrokerStartInfo `
         -RepoRoot $tempRoot `
