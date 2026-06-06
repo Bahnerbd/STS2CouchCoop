@@ -11,7 +11,12 @@ public static class RunIdentityDiagnostics
 {
     private static readonly AsyncLocal<string?> AmbientCorrelationId = new();
     private static readonly object SettingsLock = new();
+    private static readonly object PeerInputDiagnosticsSamplingLock = new();
+    private static readonly object DualRoleSuppressionDiagnosticsSamplingLock = new();
     private static readonly TimeSpan CorrelationCarryDuration = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan PeerInputDiagnosticsSampleInterval = TimeSpan.FromSeconds(1);
+    private static readonly Dictionary<string, long> PeerInputDiagnosticsLastLogTicks = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, long> DualRoleSuppressionDiagnosticsLastLogTicks = new(StringComparer.Ordinal);
     private static long _nextCorrelationId;
     private static string? _lastShopRemoveCorrelationId;
     private static long _lastShopRemoveCorrelationTicks;
@@ -38,6 +43,47 @@ public static class RunIdentityDiagnostics
     public static bool IsEnabled()
     {
         return TryGetEnabledSettings(out _, out _);
+    }
+
+    public static bool ShouldLogPeerInputDiagnostics(string phase, MethodBase method)
+    {
+        return ShouldLogPeerInputDiagnostics(phase, method, DateTimeOffset.UtcNow);
+    }
+
+    public static bool ShouldLogPeerInputDiagnosticsForTesting(
+        string phase,
+        MethodBase method,
+        DateTimeOffset now)
+    {
+        return ShouldLogPeerInputDiagnostics(phase, method, now);
+    }
+
+    public static void ResetPeerInputDiagnosticsSamplingForTesting()
+    {
+        lock (PeerInputDiagnosticsSamplingLock)
+        {
+            PeerInputDiagnosticsLastLogTicks.Clear();
+        }
+    }
+
+    public static bool ShouldLogDualRoleSuppressionDiagnostics(MethodBase method)
+    {
+        return ShouldLogDualRoleSuppressionDiagnostics(method, DateTimeOffset.UtcNow);
+    }
+
+    public static bool ShouldLogDualRoleSuppressionDiagnosticsForTesting(
+        MethodBase method,
+        DateTimeOffset now)
+    {
+        return ShouldLogDualRoleSuppressionDiagnostics(method, now);
+    }
+
+    public static void ResetDualRoleSuppressionDiagnosticsSamplingForTesting()
+    {
+        lock (DualRoleSuppressionDiagnosticsSamplingLock)
+        {
+            DualRoleSuppressionDiagnosticsLastLogTicks.Clear();
+        }
     }
 
     public static string StartCorrelation(string kind)
@@ -69,6 +115,57 @@ public static class RunIdentityDiagnostics
         }
 
         return StartCorrelation(kind);
+    }
+
+    private static bool ShouldLogPeerInputDiagnostics(
+        string phase,
+        MethodBase method,
+        DateTimeOffset now)
+    {
+        return ShouldLogSampledDiagnostics(
+            PeerInputDiagnosticsSamplingLock,
+            PeerInputDiagnosticsLastLogTicks,
+            phase,
+            method,
+            now);
+    }
+
+    private static bool ShouldLogDualRoleSuppressionDiagnostics(
+        MethodBase method,
+        DateTimeOffset now)
+    {
+        return ShouldLogSampledDiagnostics(
+            DualRoleSuppressionDiagnosticsSamplingLock,
+            DualRoleSuppressionDiagnosticsLastLogTicks,
+            "dual-role-local-self-coop-suppressed",
+            method,
+            now);
+    }
+
+    private static bool ShouldLogSampledDiagnostics(
+        object samplingLock,
+        Dictionary<string, long> lastLogTicksByKey,
+        string phase,
+        MethodBase method,
+        DateTimeOffset now)
+    {
+        var key = $"{phase}|{method.DeclaringType?.FullName ?? method.DeclaringType?.Name ?? "<unknown>"}|{method.Name}";
+        var nowTicks = now.UtcDateTime.Ticks;
+
+        lock (samplingLock)
+        {
+            if (lastLogTicksByKey.TryGetValue(key, out var lastTicks))
+            {
+                var elapsedTicks = nowTicks - lastTicks;
+                if (elapsedTicks >= 0 && elapsedTicks < PeerInputDiagnosticsSampleInterval.Ticks)
+                {
+                    return false;
+                }
+            }
+
+            lastLogTicksByKey[key] = nowTicks;
+            return true;
+        }
     }
 
     public static void LogStartupSnapshot(

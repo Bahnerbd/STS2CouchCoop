@@ -13,18 +13,31 @@ public static class SteamControllerInputSelectionPatches
         return type is null ? null : AccessTools.Method(type, "UpdateControllerConnections");
     }
 
-    public static void Postfix(object __instance)
+    public static bool Prefix(object __instance)
     {
         var settings = LoadSettings();
-        if (!settings.Enabled || settings.Config is null)
+        if (!ShouldReplaceNativeUpdateControllerConnections(settings))
         {
-            return;
+            return true;
         }
 
         SteamControllerInputSelection.ApplySelection(
             __instance,
-            settings.Config.ControllerDevice,
+            settings.Config!.ControllerDevice,
             message => new BrokerEventLog(settings.EventLogPath).Write(message));
+        return false;
+    }
+
+    public static bool ShouldReplaceNativeUpdateControllerConnectionsForTesting(BrokerModeSettings settings)
+    {
+        return ShouldReplaceNativeUpdateControllerConnections(settings);
+    }
+
+    private static bool ShouldReplaceNativeUpdateControllerConnections(BrokerModeSettings settings)
+    {
+        return settings.Enabled
+            && settings.Config is not null
+            && settings.Config.ControllerDevice.IsConfigured;
     }
 
     private static BrokerModeSettings LoadSettings()

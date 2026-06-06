@@ -62,6 +62,47 @@ public sealed class RunIdentityDiagnosticsTests
         }
     }
 
+    [TestMethod]
+    public void PeerInputDiagnosticsAreSampledPerMethodAndPhase()
+    {
+        RunIdentityDiagnostics.ResetPeerInputDiagnosticsSamplingForTesting();
+        var now = new DateTimeOffset(2026, 6, 6, 7, 40, 0, TimeSpan.Zero);
+        var method = typeof(FakePeerInputSynchronizer).GetMethod(nameof(FakePeerInputSynchronizer.SyncLocalMousePos))!;
+
+        Assert.IsTrue(RunIdentityDiagnostics.ShouldLogPeerInputDiagnosticsForTesting(
+            "peer-input-ownership-enter",
+            method,
+            now));
+        Assert.IsFalse(RunIdentityDiagnostics.ShouldLogPeerInputDiagnosticsForTesting(
+            "peer-input-ownership-enter",
+            method,
+            now.AddMilliseconds(250)));
+        Assert.IsTrue(RunIdentityDiagnostics.ShouldLogPeerInputDiagnosticsForTesting(
+            "peer-input-ownership-exit",
+            method,
+            now.AddMilliseconds(250)));
+        Assert.IsTrue(RunIdentityDiagnostics.ShouldLogPeerInputDiagnosticsForTesting(
+            "peer-input-ownership-enter",
+            method,
+            now.AddSeconds(1).AddMilliseconds(1)));
+    }
+
+    [TestMethod]
+    public void DualRoleSuppressionDiagnosticsAreSampledPerMethod()
+    {
+        RunIdentityDiagnostics.ResetDualRoleSuppressionDiagnosticsSamplingForTesting();
+        var now = new DateTimeOffset(2026, 6, 6, 8, 5, 0, TimeSpan.Zero);
+        var method = typeof(FakeLocalSelfCoopContext).GetProperty(nameof(FakeLocalSelfCoopContext.IsEnabled))!.GetMethod!;
+
+        Assert.IsTrue(RunIdentityDiagnostics.ShouldLogDualRoleSuppressionDiagnosticsForTesting(method, now));
+        Assert.IsFalse(RunIdentityDiagnostics.ShouldLogDualRoleSuppressionDiagnosticsForTesting(
+            method,
+            now.AddMilliseconds(250)));
+        Assert.IsTrue(RunIdentityDiagnostics.ShouldLogDualRoleSuppressionDiagnosticsForTesting(
+            method,
+            now.AddSeconds(1).AddMilliseconds(1)));
+    }
+
     private sealed class FakeRunManagerOwner
     {
         public FakeNetService NetService { get; } = new();
@@ -108,5 +149,17 @@ public sealed class RunIdentityDiagnosticsTests
     private sealed class FakePlayer(ulong netId)
     {
         public ulong NetId { get; } = netId;
+    }
+
+    private sealed class FakePeerInputSynchronizer
+    {
+        public void SyncLocalMousePos()
+        {
+        }
+    }
+
+    private sealed class FakeLocalSelfCoopContext
+    {
+        public bool IsEnabled => true;
     }
 }

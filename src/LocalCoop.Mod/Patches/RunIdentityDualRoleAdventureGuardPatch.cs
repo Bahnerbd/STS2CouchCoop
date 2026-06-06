@@ -21,7 +21,11 @@ public static class RunIdentityDualRoleAdventureVoidGuardPatch
             return true;
         }
 
-        RunIdentityDiagnostics.LogBoundary("dual-role-local-self-coop-suppressed", __originalMethod, __instance, __args);
+        if (RunIdentityDiagnostics.ShouldLogDualRoleSuppressionDiagnostics(__originalMethod))
+        {
+            RunIdentityDiagnostics.LogBoundary("dual-role-local-self-coop-suppressed", __originalMethod, __instance, __args);
+        }
+
         return false;
     }
 }
@@ -48,7 +52,11 @@ public static class RunIdentityDualRoleAdventureBoolGuardPatch
         }
 
         __result = false;
-        RunIdentityDiagnostics.LogBoundary("dual-role-local-self-coop-suppressed", __originalMethod, __instance, __args);
+        if (RunIdentityDiagnostics.ShouldLogDualRoleSuppressionDiagnostics(__originalMethod))
+        {
+            RunIdentityDiagnostics.LogBoundary("dual-role-local-self-coop-suppressed", __originalMethod, __instance, __args);
+        }
+
         return false;
     }
 }

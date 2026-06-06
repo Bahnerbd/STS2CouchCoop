@@ -8,6 +8,11 @@ if (-not (Test-Path -LiteralPath $scriptPath)) {
     throw "Startup script not found: $scriptPath"
 }
 
+$scriptContent = Get-Content -Raw -LiteralPath $scriptPath
+if ($scriptContent -notmatch '\[int\]\$WindowPlacementStabilizationSeconds\s*=\s*0') {
+    throw 'Start-LocalCoopClients.ps1 should default post-launch window placement stabilization to one immediate pass.'
+}
+
 . $scriptPath
 
 function Assert-Equal($actual, $expected, [string]$message) {
@@ -28,6 +33,13 @@ function Assert-True($condition, [string]$message) {
     if (-not $condition) {
         throw $message
     }
+}
+
+function Assert-RectangleEqual($actual, [int]$x, [int]$y, [int]$width, [int]$height, [string]$message) {
+    Assert-Equal $actual.X $x "$message X mismatch."
+    Assert-Equal $actual.Y $y "$message Y mismatch."
+    Assert-Equal $actual.Width $width "$message Width mismatch."
+    Assert-Equal $actual.Height $height "$message Height mismatch."
 }
 
 function Assert-Throws([scriptblock]$scriptBlock, [string]$expectedText, [string]$message) {
@@ -82,6 +94,185 @@ try {
 
     Assert-Throws { Assert-LocalCoopClientCount -ClientCount 1 } '2 through 4' 'Client count validation should reject values below 2.'
     Assert-Throws { Assert-LocalCoopClientCount -ClientCount 5 } '2 through 4' 'Client count validation should reject values above 4.'
+
+    $screenBounds = [pscustomobject]@{
+        X = 0
+        Y = 0
+        Width = 3840
+        Height = 2160
+    }
+
+    Assert-RectangleEqual (Get-LocalCoopClientWindowBounds -ScreenBounds $screenBounds -ClientIndex 0) 0 0 1920 1080 'Client 0 should use the top-left quadrant.'
+    Assert-RectangleEqual (Get-LocalCoopClientWindowBounds -ScreenBounds $screenBounds -ClientIndex 1) 1920 0 1920 1080 'Client 1 should use the top-right quadrant.'
+    Assert-RectangleEqual (Get-LocalCoopClientWindowBounds -ScreenBounds $screenBounds -ClientIndex 2) 0 1080 1920 1080 'Client 2 should use the bottom-left quadrant.'
+    Assert-RectangleEqual (Get-LocalCoopClientWindowBounds -ScreenBounds $screenBounds -ClientIndex 3) 1920 1080 1920 1080 'Client 3 should use the bottom-right quadrant.'
+
+    $offsetScreenBounds = [pscustomobject]@{
+        X = -1920
+        Y = 40
+        Width = 1919
+        Height = 1039
+    }
+
+    Assert-RectangleEqual (Get-LocalCoopClientWindowBounds -ScreenBounds $offsetScreenBounds -ClientIndex 3) -961 559 960 520 'Client bounds should preserve offset screen coordinates and odd pixels.'
+
+    $placementPlan = Get-LocalCoopClientWindowPlacementPlan -ScreenBounds $screenBounds -ClientCount 3
+    Assert-SequenceEqual ($placementPlan | ForEach-Object { $_.ClientIndex.ToString() }) @('0', '1', '2') 'Placement plan should keep client index order.'
+    Assert-RectangleEqual $placementPlan[2] 0 1080 1920 1080 'Three-client placement should reserve the bottom-left quadrant for client 2.'
+
+    $windowArguments = Format-LocalCoopGameWindowArgumentList -WindowBounds ($placementPlan[2])
+    Assert-SequenceEqual $windowArguments @('--windowed', '--position', '0,1080', '--resolution', '1920x1080') 'Game window arguments should request the planned client window at process startup.'
+
+    $clientStartInfo = New-LocalCoopClientStartInfo `
+        -GameExecutablePath 'D:\SteamLibrary\steamapps\common\Slay the Spire 2\SlayTheSpire2.exe' `
+        -GameRoot 'D:\SteamLibrary\steamapps\common\Slay the Spire 2' `
+        -ClientConfigDirectory '.localcoop-clients\client-2' `
+        -WindowBounds ($placementPlan[2])
+
+    Assert-Equal $clientStartInfo.Arguments '' 'Client start info should not pass Godot window placement flags by default.'
+    $clientConfigDirectory = $clientStartInfo.EnvironmentVariables.Get_Item('LOCALCOOP_CONFIG_DIR')
+    Assert-Equal $clientConfigDirectory '.localcoop-clients\client-2' 'Client start info should preserve LocalCoop config directory.'
+
+    $clientStartInfoWithGameWindowArguments = New-LocalCoopClientStartInfo `
+        -GameExecutablePath 'D:\SteamLibrary\steamapps\common\Slay the Spire 2\SlayTheSpire2.exe' `
+        -GameRoot 'D:\SteamLibrary\steamapps\common\Slay the Spire 2' `
+        -ClientConfigDirectory '.localcoop-clients\client-2' `
+        -WindowBounds ($placementPlan[2]) `
+        -UseGameWindowArguments
+
+    Assert-Equal $clientStartInfoWithGameWindowArguments.Arguments '--windowed --position 0,1080 --resolution 1920x1080' 'Client start info should pass Godot window placement flags only when requested.'
+
+    Assert-Equal (Get-LocalCoopWindowPlacementAttemptCount -StabilizationSeconds 0 -RetryIntervalMilliseconds 1000) 1 'Zero-second stabilization should place windows once without retrying.'
+    Assert-Equal (Get-LocalCoopWindowPlacementAttemptCount -StabilizationSeconds 5 -RetryIntervalMilliseconds 1000) 6 'Stabilization should include the immediate attempt and each retry tick.'
+    Assert-Throws { Get-LocalCoopWindowPlacementAttemptCount -StabilizationSeconds 5 -RetryIntervalMilliseconds 0 } 'positive' 'Placement retry interval validation should reject zero.'
+
+    $script:movedWindowHandles = @()
+    Invoke-LocalCoopClientWindowPlacementStabilization `
+        -ClientLaunches @([pscustomobject]@{
+            ClientIndex = 0
+            Process = [pscustomobject]@{ Id = 42 }
+            ConfigDirectory = 'client-0'
+        }) `
+        -ScreenBounds $screenBounds `
+        -TimeoutSeconds 0 `
+        -StabilizationSeconds 0 `
+        -RetryIntervalMilliseconds 1000 `
+        -ResolveWindowHandle {
+            [IntPtr]::new(101)
+        } `
+        -MoveWindow {
+            param($windowHandle, $bounds)
+            $script:movedWindowHandles += $windowHandle.ToInt64().ToString()
+        } `
+        -SleepMilliseconds {
+            param($milliseconds)
+        }
+
+    Assert-SequenceEqual $script:movedWindowHandles @('101') 'Zero-second stabilization should force exactly one post-launch Win32 resize.'
+
+    $script:resolvedWindowHandles = @([IntPtr]::new(101), [IntPtr]::new(202))
+    $script:resolveWindowHandleIndex = 0
+    $script:movedWindowHandles = @()
+    Invoke-LocalCoopClientWindowPlacementStabilization `
+        -ClientLaunches @([pscustomobject]@{
+            ClientIndex = 0
+            Process = [pscustomobject]@{ Id = 42 }
+            ConfigDirectory = 'client-0'
+        }) `
+        -ScreenBounds $screenBounds `
+        -TimeoutSeconds 0 `
+        -StabilizationSeconds 1 `
+        -RetryIntervalMilliseconds 1000 `
+        -ResolveWindowHandle {
+            param($process, $timeoutSeconds)
+            $handle = $script:resolvedWindowHandles[$script:resolveWindowHandleIndex]
+            $script:resolveWindowHandleIndex++
+            $handle
+        } `
+        -MoveWindow {
+            param($windowHandle, $bounds)
+            $script:movedWindowHandles += $windowHandle.ToInt64().ToString()
+        } `
+        -SleepMilliseconds {
+            param($milliseconds)
+        }
+
+    Assert-SequenceEqual $script:movedWindowHandles @('101', '202') 'Placement stabilization should re-resolve the current window handle on every attempt.'
+
+    Enable-LocalCoopDpiAwareness
+    Enable-LocalCoopDpiAwareness
+
+    $desiredFrameBounds = [pscustomobject]@{
+        X = 0
+        Y = 0
+        Width = 1920
+        Height = 1080
+    }
+
+    $currentWindowBounds = [pscustomobject]@{
+        X = -8
+        Y = -8
+        Width = 1936
+        Height = 1096
+    }
+
+    $currentVisibleFrameBounds = [pscustomobject]@{
+        X = 0
+        Y = 0
+        Width = 1920
+        Height = 1080
+    }
+
+    Assert-RectangleEqual (ConvertTo-LocalCoopOuterWindowBounds `
+        -DesiredFrameBounds $desiredFrameBounds `
+        -CurrentWindowBounds $currentWindowBounds `
+        -CurrentVisibleFrameBounds $currentVisibleFrameBounds) -8 -8 1936 1096 'Outer window bounds should compensate for invisible resize borders.'
+
+    $logicalWindowBounds = [pscustomobject]@{
+        X = -6
+        Y = 696
+        Width = 1292
+        Height = 702
+    }
+
+    $physicalVisibleFrameBounds = [pscustomobject]@{
+        X = 0
+        Y = 1044
+        Width = 1920
+        Height = 1044
+    }
+
+    $normalizedVisibleFrameBounds = ConvertTo-LocalCoopComparableVisibleFrameBounds `
+        -VisibleFrameBounds $physicalVisibleFrameBounds `
+        -WindowBounds $logicalWindowBounds `
+        -Dpi 144
+
+    Assert-RectangleEqual $normalizedVisibleFrameBounds 0 696 1280 696 'Physical DWM frame bounds should be scaled to match logical GetWindowRect bounds.'
+
+    $physicalDesiredFrameBounds = [pscustomobject]@{
+        X = 0
+        Y = 0
+        Width = 1920
+        Height = 1044
+    }
+
+    $comparableDesiredFrameBounds = ConvertTo-LocalCoopComparableDesiredFrameBounds `
+        -DesiredFrameBounds $physicalDesiredFrameBounds `
+        -CoordinateScale 1.5
+
+    Assert-RectangleEqual $comparableDesiredFrameBounds 0 0 1280 696 'Desired physical quadrant bounds should be scaled before MoveWindow when the target window uses logical coordinates.'
+
+    $desiredLogicalFrameBounds = [pscustomobject]@{
+        X = 0
+        Y = 0
+        Width = 1280
+        Height = 696
+    }
+
+    Assert-RectangleEqual (ConvertTo-LocalCoopOuterWindowBounds `
+        -DesiredFrameBounds $desiredLogicalFrameBounds `
+        -CurrentWindowBounds $logicalWindowBounds `
+        -CurrentVisibleFrameBounds $normalizedVisibleFrameBounds) -6 0 1292 702 'DPI-normalized frame margins should produce usable outer bounds.'
 
     $gameRoot = Join-Path $tempRoot 'game'
     $modDirectory = Join-Path $gameRoot 'mods\LocalCoop'

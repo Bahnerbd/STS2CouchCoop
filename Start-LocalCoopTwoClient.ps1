@@ -7,13 +7,19 @@ param(
     [string]$DefaultHost = '127.0.0.1',
     [int]$DefaultPort = 38989,
     [int]$BrokerStartupTimeoutSeconds = 60,
+    [int]$WindowPlacementTimeoutSeconds = 30,
+    [int]$WindowPlacementStabilizationSeconds = 0,
+    [int]$WindowPlacementRetryIntervalMilliseconds = 1000,
     [switch]$ReuseExistingBroker,
     [switch]$SkipClientLaunch,
+    [switch]$SkipWindowPlacement,
     [switch]$NoWaitForBroker
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+$script:LocalCoopWindowPlacementDpiAwarenessInitialized = $false
 
 function Read-LocalCoopBrokerConfig {
     [CmdletBinding()]
@@ -80,14 +86,112 @@ function Read-LocalCoopBrokerConfig {
     }
 }
 
+function Test-LocalCoopPackagedInstall {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    Test-Path -LiteralPath (Join-Path $RepoRoot 'broker\LocalCoop.Broker.Cli.exe') -PathType Leaf
+}
+
+function Resolve-LocalCoopDefaultGameRoot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    $resolvedRepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
+    if (Test-LocalCoopPackagedInstall -RepoRoot $resolvedRepoRoot) {
+        $parent = Split-Path -Parent $resolvedRepoRoot
+        $grandParent = Split-Path -Parent $parent
+        if ((Split-Path -Leaf $resolvedRepoRoot) -ieq 'LocalCoop' -and
+            (Split-Path -Leaf $parent) -ieq 'mods' -and
+            -not [string]::IsNullOrWhiteSpace($grandParent)) {
+            return (Resolve-Path -LiteralPath $grandParent).Path
+        }
+    }
+
+    (Resolve-Path -LiteralPath (Join-Path $resolvedRepoRoot '..')).Path
+}
+
+function Get-LocalCoopUserStateRoot {
+    [CmdletBinding()]
+    param()
+
+    $appData = $env:APPDATA
+    if ([string]::IsNullOrWhiteSpace($appData)) {
+        $appData = [Environment]::GetFolderPath([Environment+SpecialFolder]::ApplicationData)
+    }
+
+    if ([string]::IsNullOrWhiteSpace($appData)) {
+        throw 'Could not resolve APPDATA for LocalCoop runtime files.'
+    }
+
+    Join-Path $appData 'SlayTheSpire2\LocalCoop'
+}
+
+function Get-LocalCoopDefaultConfigRoot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    if (Test-LocalCoopPackagedInstall -RepoRoot $RepoRoot) {
+        return Join-Path (Get-LocalCoopUserStateRoot) 'clients'
+    }
+
+    Join-Path $RepoRoot '.localcoop-clients'
+}
+
+function Get-LocalCoopDefaultRuntimeRoot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    if (Test-LocalCoopPackagedInstall -RepoRoot $RepoRoot) {
+        return Join-Path (Get-LocalCoopUserStateRoot) 'runtime'
+    }
+
+    Join-Path $RepoRoot '.localcoop-runtime'
+}
+
+function Get-LocalCoopPackagedBrokerExecutablePath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    $brokerPath = Join-Path $RepoRoot 'broker\LocalCoop.Broker.Cli.exe'
+    if (Test-Path -LiteralPath $brokerPath -PathType Leaf) {
+        return $brokerPath
+    }
+
+    $null
+}
+
 function Format-LocalCoopBrokerArgumentList {
     [CmdletBinding()]
     param(
+        [string]$RepoRoot,
         [Parameter(Mandatory = $true)]
         [string]$SessionId,
         [Parameter(Mandatory = $true)]
         [int]$Port
     )
+
+    if (-not [string]::IsNullOrWhiteSpace($RepoRoot)) {
+        $brokerExecutablePath = Get-LocalCoopPackagedBrokerExecutablePath -RepoRoot $RepoRoot
+        if (-not [string]::IsNullOrWhiteSpace($brokerExecutablePath)) {
+            return @($brokerExecutablePath, $SessionId, $Port.ToString())
+        }
+    }
 
     @('src\LocalCoop.Broker.Cli\bin\Debug\net9.0-launch\LocalCoop.Broker.Cli.dll', $SessionId, $Port.ToString())
 }
@@ -206,21 +310,35 @@ function Write-LocalCoopBrokerLauncherScript {
     )
 
     $sessionToken = ConvertTo-LocalCoopFileToken -Value $SessionId
-    $runtimeRoot = Join-Path $RepoRoot '.localcoop-runtime'
+    $runtimeRoot = Get-LocalCoopDefaultRuntimeRoot -RepoRoot $RepoRoot
     New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
 
     $launcherPath = Join-Path $runtimeRoot ("start-broker-{0}-{1}.ps1" -f $sessionToken, $Port)
     $logPath = Join-Path $runtimeRoot ("broker-{0}-{1}.log" -f $sessionToken, $Port)
-    $arguments = Format-LocalCoopBrokerArgumentList -SessionId $SessionId -Port $Port
-    $quotedArguments = ($arguments | ForEach-Object { ConvertTo-LocalCoopPowerShellSingleQuoted -Value $_ }) -join ', '
+    $arguments = Format-LocalCoopBrokerArgumentList -RepoRoot $RepoRoot -SessionId $SessionId -Port $Port
 
     $content = @(
         'Set-StrictMode -Version Latest'
         '$ErrorActionPreference = ''Stop'''
         ('Set-Location -LiteralPath {0}' -f (ConvertTo-LocalCoopPowerShellSingleQuoted -Value $RepoRoot))
-        ('$brokerArguments = @({0})' -f $quotedArguments)
-        ('& dotnet @brokerArguments *> {0}' -f (ConvertTo-LocalCoopPowerShellSingleQuoted -Value $logPath))
     )
+
+    if ($arguments[0].EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) {
+        $brokerExecutable = ConvertTo-LocalCoopPowerShellSingleQuoted -Value $arguments[0]
+        $quotedBrokerArguments = ($arguments[1..($arguments.Count - 1)] | ForEach-Object { ConvertTo-LocalCoopPowerShellSingleQuoted -Value $_ }) -join ', '
+        $content += @(
+            ('$brokerExecutable = {0}' -f $brokerExecutable)
+            ('$brokerArguments = @({0})' -f $quotedBrokerArguments)
+            ('& $brokerExecutable @brokerArguments *> {0}' -f (ConvertTo-LocalCoopPowerShellSingleQuoted -Value $logPath))
+        )
+    }
+    else {
+        $quotedArguments = ($arguments | ForEach-Object { ConvertTo-LocalCoopPowerShellSingleQuoted -Value $_ }) -join ', '
+        $content += @(
+            ('$brokerArguments = @({0})' -f $quotedArguments)
+            ('& dotnet @brokerArguments *> {0}' -f (ConvertTo-LocalCoopPowerShellSingleQuoted -Value $logPath))
+        )
+    }
 
     Set-Content -LiteralPath $launcherPath -Value $content
     $launcherPath
@@ -407,7 +525,10 @@ function Start-LocalCoopBrokerProcess {
         [int]$Port
     )
 
-    Invoke-LocalCoopBrokerBuild -RepoRoot $RepoRoot
+    if (-not (Test-LocalCoopPackagedInstall -RepoRoot $RepoRoot)) {
+        Invoke-LocalCoopBrokerBuild -RepoRoot $RepoRoot
+    }
+
     $startInfo = New-LocalCoopBrokerStartInfo -RepoRoot $RepoRoot -SessionId $SessionId -Port $Port
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
@@ -510,6 +631,669 @@ function Get-LocalCoopClientConfigDirectories {
     $directories
 }
 
+function Get-LocalCoopPrimaryScreenWorkingArea {
+    [CmdletBinding()]
+    param()
+
+    Enable-LocalCoopDpiAwareness
+    Add-Type -AssemblyName System.Windows.Forms
+    $workingArea = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+
+    [pscustomobject]@{
+        X = [int]$workingArea.X
+        Y = [int]$workingArea.Y
+        Width = [int]$workingArea.Width
+        Height = [int]$workingArea.Height
+    }
+}
+
+function Get-LocalCoopClientWindowBounds {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ScreenBounds,
+        [Parameter(Mandatory = $true)]
+        [int]$ClientIndex
+    )
+
+    if ($ClientIndex -lt 0 -or $ClientIndex -gt 3) {
+        throw 'ClientIndex must be 0 through 3.'
+    }
+
+    if ($ScreenBounds.Width -le 0 -or $ScreenBounds.Height -le 0) {
+        throw 'Screen bounds must have positive width and height.'
+    }
+
+    $leftWidth = [int][Math]::Floor($ScreenBounds.Width / 2.0)
+    $topHeight = [int][Math]::Floor($ScreenBounds.Height / 2.0)
+    $rightWidth = [int]$ScreenBounds.Width - $leftWidth
+    $bottomHeight = [int]$ScreenBounds.Height - $topHeight
+
+    $isRightColumn = ($ClientIndex % 2) -eq 1
+    $isBottomRow = $ClientIndex -ge 2
+
+    [pscustomobject]@{
+        ClientIndex = $ClientIndex
+        X = $(if ($isRightColumn) { [int]$ScreenBounds.X + $leftWidth } else { [int]$ScreenBounds.X })
+        Y = $(if ($isBottomRow) { [int]$ScreenBounds.Y + $topHeight } else { [int]$ScreenBounds.Y })
+        Width = $(if ($isRightColumn) { $rightWidth } else { $leftWidth })
+        Height = $(if ($isBottomRow) { $bottomHeight } else { $topHeight })
+    }
+}
+
+function Get-LocalCoopClientWindowPlacementPlan {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$ScreenBounds,
+        [Parameter(Mandatory = $true)]
+        [int]$ClientCount
+    )
+
+    Assert-LocalCoopClientCount -ClientCount $ClientCount
+
+    for ($clientIndex = 0; $clientIndex -lt $ClientCount; $clientIndex++) {
+        Get-LocalCoopClientWindowBounds -ScreenBounds $ScreenBounds -ClientIndex $clientIndex
+    }
+}
+
+function Get-LocalCoopWindowPlacementAttemptCount {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$StabilizationSeconds,
+        [Parameter(Mandatory = $true)]
+        [int]$RetryIntervalMilliseconds
+    )
+
+    if ($StabilizationSeconds -lt 0) {
+        throw 'Window placement stabilization seconds must be zero or greater.'
+    }
+
+    if ($RetryIntervalMilliseconds -le 0) {
+        throw 'Window placement retry interval must be positive.'
+    }
+
+    1 + [int][Math]::Floor(($StabilizationSeconds * 1000.0) / $RetryIntervalMilliseconds)
+}
+
+function ConvertTo-LocalCoopOuterWindowBounds {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$DesiredFrameBounds,
+        [Parameter(Mandatory = $true)]
+        [object]$CurrentWindowBounds,
+        [Parameter(Mandatory = $true)]
+        [object]$CurrentVisibleFrameBounds
+    )
+
+    $leftMargin = [int]$CurrentVisibleFrameBounds.X - [int]$CurrentWindowBounds.X
+    $topMargin = [int]$CurrentVisibleFrameBounds.Y - [int]$CurrentWindowBounds.Y
+    $rightMargin = ([int]$CurrentWindowBounds.X + [int]$CurrentWindowBounds.Width) - ([int]$CurrentVisibleFrameBounds.X + [int]$CurrentVisibleFrameBounds.Width)
+    $bottomMargin = ([int]$CurrentWindowBounds.Y + [int]$CurrentWindowBounds.Height) - ([int]$CurrentVisibleFrameBounds.Y + [int]$CurrentVisibleFrameBounds.Height)
+
+    [pscustomobject]@{
+        X = [int]$DesiredFrameBounds.X - $leftMargin
+        Y = [int]$DesiredFrameBounds.Y - $topMargin
+        Width = [int]$DesiredFrameBounds.Width + $leftMargin + $rightMargin
+        Height = [int]$DesiredFrameBounds.Height + $topMargin + $bottomMargin
+    }
+}
+
+function ConvertTo-LocalCoopComparableVisibleFrameBounds {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$VisibleFrameBounds,
+        [Parameter(Mandatory = $true)]
+        [object]$WindowBounds,
+        [Parameter(Mandatory = $true)]
+        [int]$Dpi
+    )
+
+    if ($Dpi -le 0) {
+        throw 'DPI must be positive.'
+    }
+
+    $visibleFrameIsLargerThanWindow =
+        [int]$VisibleFrameBounds.Width -gt [int]$WindowBounds.Width -or
+        [int]$VisibleFrameBounds.Height -gt [int]$WindowBounds.Height
+
+    if (-not $visibleFrameIsLargerThanWindow -or $Dpi -eq 96) {
+        return $VisibleFrameBounds
+    }
+
+    $scale = Get-LocalCoopWindowCoordinateScale `
+        -VisibleFrameBounds $VisibleFrameBounds `
+        -WindowBounds $WindowBounds `
+        -Dpi $Dpi
+
+    [pscustomobject]@{
+        X = [int][Math]::Round([int]$VisibleFrameBounds.X / $scale)
+        Y = [int][Math]::Round([int]$VisibleFrameBounds.Y / $scale)
+        Width = [int][Math]::Round([int]$VisibleFrameBounds.Width / $scale)
+        Height = [int][Math]::Round([int]$VisibleFrameBounds.Height / $scale)
+    }
+}
+
+function ConvertTo-LocalCoopComparableDesiredFrameBounds {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$DesiredFrameBounds,
+        [Parameter(Mandatory = $true)]
+        [double]$CoordinateScale
+    )
+
+    if ($CoordinateScale -le 0) {
+        throw 'Coordinate scale must be positive.'
+    }
+
+    [pscustomobject]@{
+        X = [int][Math]::Round([int]$DesiredFrameBounds.X / $CoordinateScale)
+        Y = [int][Math]::Round([int]$DesiredFrameBounds.Y / $CoordinateScale)
+        Width = [int][Math]::Round([int]$DesiredFrameBounds.Width / $CoordinateScale)
+        Height = [int][Math]::Round([int]$DesiredFrameBounds.Height / $CoordinateScale)
+    }
+}
+
+function Get-LocalCoopWindowCoordinateScale {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$VisibleFrameBounds,
+        [Parameter(Mandatory = $true)]
+        [object]$WindowBounds,
+        [Parameter(Mandatory = $true)]
+        [int]$Dpi
+    )
+
+    if ($Dpi -le 0) {
+        throw 'DPI must be positive.'
+    }
+
+    $visibleFrameIsLargerThanWindow =
+        [int]$VisibleFrameBounds.Width -gt [int]$WindowBounds.Width -or
+        [int]$VisibleFrameBounds.Height -gt [int]$WindowBounds.Height
+
+    if ($visibleFrameIsLargerThanWindow -and $Dpi -ne 96) {
+        return ($Dpi / 96.0)
+    }
+
+    1.0
+}
+
+function Initialize-LocalCoopWin32WindowApi {
+    [CmdletBinding()]
+    param()
+
+    if (([System.Management.Automation.PSTypeName]'LocalCoop.WindowPlacementWin32').Type) {
+        return
+    }
+
+    Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+namespace LocalCoop
+{
+    public static class WindowPlacementWin32
+    {
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool MoveWindow(IntPtr hWnd, int x, int y, int width, int height, bool repaint);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool ShowWindow(IntPtr hWnd, int command);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetProcessDpiAwarenessContext(IntPtr dpiContext);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetProcessDPIAware();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
+
+        [DllImport("user32.dll")]
+        public static extern uint GetDpiForWindow(IntPtr hWnd);
+
+        [DllImport("dwmapi.dll", PreserveSig = true)]
+        public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out RECT rect, int attributeSize);
+
+        [StructLayout(LayoutKind.Sequential)]
+        public struct RECT
+        {
+            public int Left;
+            public int Top;
+            public int Right;
+            public int Bottom;
+        }
+    }
+}
+'@
+}
+
+function Enable-LocalCoopDpiAwareness {
+    [CmdletBinding()]
+    param()
+
+    if ($script:LocalCoopWindowPlacementDpiAwarenessInitialized) {
+        return
+    }
+
+    Initialize-LocalCoopWin32WindowApi
+
+    $perMonitorAwareV2 = [IntPtr]::new(-4)
+    if (-not [LocalCoop.WindowPlacementWin32]::SetProcessDpiAwarenessContext($perMonitorAwareV2)) {
+        [void][LocalCoop.WindowPlacementWin32]::SetProcessDPIAware()
+    }
+
+    $script:LocalCoopWindowPlacementDpiAwarenessInitialized = $true
+}
+
+function Wait-LocalCoopMainWindowHandle {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)]
+        [int]$TimeoutSeconds
+    )
+
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($stopwatch.Elapsed.TotalSeconds -lt $TimeoutSeconds) {
+        if ($Process.HasExited) {
+            return ([IntPtr]::Zero)
+        }
+
+        $Process.Refresh()
+        if ($Process.MainWindowHandle -ne [IntPtr]::Zero) {
+            return $Process.MainWindowHandle
+        }
+
+        Start-Sleep -Milliseconds 250
+    }
+
+    [IntPtr]::Zero
+}
+
+function ConvertFrom-LocalCoopWin32Rect {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$Rect
+    )
+
+    [pscustomobject]@{
+        X = [int]$Rect.Left
+        Y = [int]$Rect.Top
+        Width = [int]$Rect.Right - [int]$Rect.Left
+        Height = [int]$Rect.Bottom - [int]$Rect.Top
+    }
+}
+
+function Get-LocalCoopWindowBounds {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [IntPtr]$WindowHandle
+    )
+
+    Initialize-LocalCoopWin32WindowApi
+
+    $rect = New-Object LocalCoop.WindowPlacementWin32+RECT
+    if (-not [LocalCoop.WindowPlacementWin32]::GetWindowRect($WindowHandle, [ref]$rect)) {
+        $lastError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw "GetWindowRect failed with Win32 error $lastError."
+    }
+
+    ConvertFrom-LocalCoopWin32Rect -Rect $rect
+}
+
+function Get-LocalCoopWindowDpi {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [IntPtr]$WindowHandle
+    )
+
+    Initialize-LocalCoopWin32WindowApi
+
+    try {
+        $dpi = [int][LocalCoop.WindowPlacementWin32]::GetDpiForWindow($WindowHandle)
+        if ($dpi -gt 0) {
+            return $dpi
+        }
+    }
+    catch {
+    }
+
+    96
+}
+
+function Get-LocalCoopVisibleFrameBounds {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [IntPtr]$WindowHandle,
+        [Parameter(Mandatory = $true)]
+        [object]$FallbackWindowBounds
+    )
+
+    Initialize-LocalCoopWin32WindowApi
+
+    $rect = New-Object LocalCoop.WindowPlacementWin32+RECT
+    $extendedFrameBounds = 9
+    $result = [LocalCoop.WindowPlacementWin32]::DwmGetWindowAttribute(
+        $WindowHandle,
+        $extendedFrameBounds,
+        [ref]$rect,
+        [Runtime.InteropServices.Marshal]::SizeOf([type]'LocalCoop.WindowPlacementWin32+RECT'))
+
+    if ($result -ne 0) {
+        return $FallbackWindowBounds
+    }
+
+    $visibleFrameBounds = ConvertFrom-LocalCoopWin32Rect -Rect $rect
+    $dpi = Get-LocalCoopWindowDpi -WindowHandle $WindowHandle
+    ConvertTo-LocalCoopComparableVisibleFrameBounds `
+        -VisibleFrameBounds $visibleFrameBounds `
+        -WindowBounds $FallbackWindowBounds `
+        -Dpi $dpi
+}
+
+function Get-LocalCoopRawVisibleFrameBounds {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [IntPtr]$WindowHandle
+    )
+
+    Initialize-LocalCoopWin32WindowApi
+
+    $rect = New-Object LocalCoop.WindowPlacementWin32+RECT
+    $extendedFrameBounds = 9
+    $result = [LocalCoop.WindowPlacementWin32]::DwmGetWindowAttribute(
+        $WindowHandle,
+        $extendedFrameBounds,
+        [ref]$rect,
+        [Runtime.InteropServices.Marshal]::SizeOf([type]'LocalCoop.WindowPlacementWin32+RECT'))
+
+    if ($result -ne 0) {
+        return $null
+    }
+
+    ConvertFrom-LocalCoopWin32Rect -Rect $rect
+}
+
+function Set-LocalCoopWindowBounds {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [IntPtr]$WindowHandle,
+        [Parameter(Mandatory = $true)]
+        [object]$Bounds
+    )
+
+    if ($WindowHandle -eq [IntPtr]::Zero) {
+        throw 'Window handle must not be zero.'
+    }
+
+    Initialize-LocalCoopWin32WindowApi
+    Enable-LocalCoopDpiAwareness
+
+    $restoreWindow = 9
+    [void][LocalCoop.WindowPlacementWin32]::ShowWindow($WindowHandle, $restoreWindow)
+
+    $currentWindowBounds = Get-LocalCoopWindowBounds -WindowHandle $WindowHandle
+    $rawVisibleFrameBounds = Get-LocalCoopRawVisibleFrameBounds -WindowHandle $WindowHandle
+    $dpi = Get-LocalCoopWindowDpi -WindowHandle $WindowHandle
+    if ($null -eq $rawVisibleFrameBounds) {
+        $rawVisibleFrameBounds = $currentWindowBounds
+    }
+
+    $coordinateScale = Get-LocalCoopWindowCoordinateScale `
+        -VisibleFrameBounds $rawVisibleFrameBounds `
+        -WindowBounds $currentWindowBounds `
+        -Dpi $dpi
+    $currentVisibleFrameBounds = ConvertTo-LocalCoopComparableVisibleFrameBounds `
+        -VisibleFrameBounds $rawVisibleFrameBounds `
+        -WindowBounds $currentWindowBounds `
+        -Dpi $dpi
+    $desiredFrameBounds = ConvertTo-LocalCoopComparableDesiredFrameBounds `
+        -DesiredFrameBounds $Bounds `
+        -CoordinateScale $coordinateScale
+    $outerBounds = ConvertTo-LocalCoopOuterWindowBounds `
+        -DesiredFrameBounds $desiredFrameBounds `
+        -CurrentWindowBounds $currentWindowBounds `
+        -CurrentVisibleFrameBounds $currentVisibleFrameBounds
+
+    $moved = [LocalCoop.WindowPlacementWin32]::MoveWindow(
+        $WindowHandle,
+        [int]$outerBounds.X,
+        [int]$outerBounds.Y,
+        [int]$outerBounds.Width,
+        [int]$outerBounds.Height,
+        $true)
+
+    if (-not $moved) {
+        $lastError = [Runtime.InteropServices.Marshal]::GetLastWin32Error()
+        throw "MoveWindow failed with Win32 error $lastError."
+    }
+}
+
+function Invoke-LocalCoopClientWindowPlacementStabilization {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$ClientLaunches,
+        [Parameter(Mandatory = $true)]
+        [object]$ScreenBounds,
+        [Parameter(Mandatory = $true)]
+        [int]$TimeoutSeconds,
+        [Parameter(Mandatory = $true)]
+        [int]$StabilizationSeconds,
+        [Parameter(Mandatory = $true)]
+        [int]$RetryIntervalMilliseconds,
+        [scriptblock]$ResolveWindowHandle = {
+            param($process, $timeoutSeconds)
+            Wait-LocalCoopMainWindowHandle -Process $process -TimeoutSeconds $timeoutSeconds
+        },
+        [scriptblock]$MoveWindow = {
+            param($windowHandle, $bounds)
+            Set-LocalCoopWindowBounds -WindowHandle $windowHandle -Bounds $bounds
+        },
+        [scriptblock]$SleepMilliseconds = {
+            param($milliseconds)
+            Start-Sleep -Milliseconds $milliseconds
+        }
+    )
+
+    $placements = @()
+    foreach ($clientLaunch in $ClientLaunches) {
+        $bounds = Get-LocalCoopClientWindowBounds -ScreenBounds $ScreenBounds -ClientIndex $clientLaunch.ClientIndex
+        $placements += [pscustomobject]@{
+            ClientIndex = $clientLaunch.ClientIndex
+            ProcessId = $clientLaunch.Process.Id
+            Process = $clientLaunch.Process
+            Bounds = $bounds
+        }
+    }
+
+    $attemptCount = Get-LocalCoopWindowPlacementAttemptCount `
+        -StabilizationSeconds $StabilizationSeconds `
+        -RetryIntervalMilliseconds $RetryIntervalMilliseconds
+
+    for ($attempt = 0; $attempt -lt $attemptCount; $attempt++) {
+        foreach ($placement in $placements) {
+            try {
+                $windowHandle = & $ResolveWindowHandle $placement.Process $TimeoutSeconds
+                if ($windowHandle -eq [IntPtr]::Zero) {
+                    if ($attempt -eq 0) {
+                        Write-Warning ("Could not find a main window for STS2 client process id {0} within {1} seconds." -f $placement.ProcessId, $TimeoutSeconds)
+                    }
+
+                    continue
+                }
+
+                & $MoveWindow $windowHandle $placement.Bounds
+                if ($attempt -eq 0) {
+                    Write-Host ("Placed STS2 client {0} process id {1} at {2},{3} {4}x{5}." -f $placement.ClientIndex, $placement.ProcessId, $placement.Bounds.X, $placement.Bounds.Y, $placement.Bounds.Width, $placement.Bounds.Height)
+                }
+            }
+            catch {
+                Write-Warning ("Could not place STS2 client {0} process id {1}: {2}" -f $placement.ClientIndex, $placement.ProcessId, $_.Exception.Message)
+            }
+        }
+
+        if ($attempt -lt ($attemptCount - 1)) {
+            & $SleepMilliseconds $RetryIntervalMilliseconds
+        }
+    }
+}
+
+function Set-LocalCoopClientWindowPlacement {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Diagnostics.Process]$Process,
+        [Parameter(Mandatory = $true)]
+        [int]$ClientIndex,
+        [Parameter(Mandatory = $true)]
+        [object]$ScreenBounds,
+        [Parameter(Mandatory = $true)]
+        [int]$TimeoutSeconds
+    )
+
+    $bounds = Get-LocalCoopClientWindowBounds -ScreenBounds $ScreenBounds -ClientIndex $ClientIndex
+    $windowHandle = Wait-LocalCoopMainWindowHandle -Process $Process -TimeoutSeconds $TimeoutSeconds
+    if ($windowHandle -eq [IntPtr]::Zero) {
+        Write-Warning ("Could not find a main window for STS2 client process id {0} within {1} seconds." -f $Process.Id, $TimeoutSeconds)
+        return $false
+    }
+
+    try {
+        Set-LocalCoopWindowBounds -WindowHandle $windowHandle -Bounds $bounds
+        Write-Host ("Placed STS2 client {0} process id {1} at {2},{3} {4}x{5}." -f $ClientIndex, $Process.Id, $bounds.X, $bounds.Y, $bounds.Width, $bounds.Height)
+        return $true
+    }
+    catch {
+        Write-Warning ("Could not place STS2 client {0} process id {1}: {2}" -f $ClientIndex, $Process.Id, $_.Exception.Message)
+        return $false
+    }
+}
+
+function ConvertFrom-LocalCoopControllerDeviceList {
+    [CmdletBinding()]
+    param(
+        [string]$ControllerDevices,
+        [Parameter(Mandatory = $true)]
+        [int]$ClientCount
+    )
+
+    Assert-LocalCoopClientCount -ClientCount $ClientCount
+
+    if ([string]::IsNullOrWhiteSpace($ControllerDevices)) {
+        $defaults = @()
+        for ($index = 0; $index -lt $ClientCount; $index++) {
+            $defaults += $index.ToString()
+        }
+
+        return $defaults
+    }
+
+    $parts = $ControllerDevices.Split(',') | ForEach-Object { $_.Trim() }
+    if ($parts.Count -ne $ClientCount) {
+        throw 'controllerDevices must provide one value per client.'
+    }
+
+    foreach ($part in $parts) {
+        if ([string]::Equals($part, 'none', [StringComparison]::OrdinalIgnoreCase)) {
+            'none'
+            continue
+        }
+
+        $device = 0
+        if (-not [int]::TryParse($part, [ref]$device) -or $device -lt 0 -or $device -gt 3) {
+            throw 'controllerDevices values must be none or integers from 0 through 3.'
+        }
+
+        $device.ToString()
+    }
+}
+
+function Format-LocalCoopClientBrokerConfig {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ClientIndex,
+        [Parameter(Mandatory = $true)]
+        [string]$ControllerDevice,
+        [Parameter(Mandatory = $true)]
+        [string]$SessionId,
+        [Parameter(Mandatory = $true)]
+        [string]$HostName,
+        [Parameter(Mandatory = $true)]
+        [int]$Port
+    )
+
+    if ([string]::IsNullOrWhiteSpace($SessionId)) {
+        throw 'Session id must not be blank.'
+    }
+
+    if ([string]::IsNullOrWhiteSpace($HostName)) {
+        throw 'Broker host must not be blank.'
+    }
+
+    if ($Port -le 0 -or $Port -gt 65535) {
+        throw 'Broker port must be 1 through 65535.'
+    }
+
+    $role = if ($ClientIndex -eq 0) { 'host' } else { 'client' }
+    @(
+        "role=$role"
+        "clientIndex=$ClientIndex"
+        "controllerDevice=$ControllerDevice"
+        "endpoint=$($HostName):$Port"
+        "sessionId=$SessionId"
+        ''
+    ) -join [Environment]::NewLine
+}
+
+function Write-LocalCoopClientBrokerConfigs {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$ConfigRoot,
+        [Parameter(Mandatory = $true)]
+        [int]$ClientCount,
+        [Parameter(Mandatory = $true)]
+        [string]$SessionId,
+        [Parameter(Mandatory = $true)]
+        [string]$HostName,
+        [Parameter(Mandatory = $true)]
+        [int]$Port,
+        [string]$ControllerDevices
+    )
+
+    Assert-LocalCoopClientCount -ClientCount $ClientCount
+    $resolvedDevices = @(ConvertFrom-LocalCoopControllerDeviceList -ControllerDevices $ControllerDevices -ClientCount $ClientCount)
+
+    for ($clientIndex = 0; $clientIndex -lt $ClientCount; $clientIndex++) {
+        $clientDirectory = Join-Path $ConfigRoot ("client-{0}" -f $clientIndex)
+        New-Item -ItemType Directory -Path $clientDirectory -Force | Out-Null
+        $content = Format-LocalCoopClientBrokerConfig `
+            -ClientIndex $clientIndex `
+            -ControllerDevice $resolvedDevices[$clientIndex] `
+            -SessionId $SessionId `
+            -HostName $HostName `
+            -Port $Port
+
+        Set-Content -LiteralPath (Join-Path $clientDirectory 'enable-local-broker.txt') -Value $content
+    }
+}
+
 function Invoke-LocalCoopClientPreparation {
     [CmdletBinding()]
     param(
@@ -529,6 +1313,19 @@ function Invoke-LocalCoopClientPreparation {
     )
 
     Assert-LocalCoopClientCount -ClientCount $ClientCount
+    $harnessProjectPath = Join-Path $RepoRoot 'tools\LocalCoop.MultiClientHarness\LocalCoop.MultiClientHarness.csproj'
+    if (-not (Test-Path -LiteralPath $harnessProjectPath)) {
+        Write-LocalCoopClientBrokerConfigs `
+            -ConfigRoot $ConfigRoot `
+            -ClientCount $ClientCount `
+            -SessionId $SessionId `
+            -HostName '127.0.0.1' `
+            -Port $Port `
+            -ControllerDevices $ControllerDevices
+
+        Write-Host ("{0}-client config prepared." -f $ClientCount)
+        return
+    }
 
     $arguments = Format-LocalCoopHarnessPreparationArgumentList `
         -ConfigRoot $ConfigRoot `
@@ -618,6 +1415,56 @@ function Format-LocalCoopHarnessPreparationArgumentList {
     $arguments
 }
 
+function Format-LocalCoopGameWindowArgumentList {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object]$WindowBounds
+    )
+
+    @(
+        '--windowed',
+        '--position',
+        ('{0},{1}' -f [int]$WindowBounds.X, [int]$WindowBounds.Y),
+        '--resolution',
+        ('{0}x{1}' -f [int]$WindowBounds.Width, [int]$WindowBounds.Height)
+    )
+}
+
+function Set-LocalCoopStartInfoEnvironmentVariable {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [System.Diagnostics.ProcessStartInfo]$StartInfo,
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+        [Parameter(Mandatory = $true)]
+        [string]$Value
+    )
+
+    $environmentVariables = $StartInfo.EnvironmentVariables
+    if ($null -eq $environmentVariables) {
+        $environmentVariables = $StartInfo.EnvironmentVariables
+    }
+
+    if ($null -ne $environmentVariables) {
+        $environmentVariables.Set_Item($Name, $Value)
+        return
+    }
+
+    $environment = $StartInfo.Environment
+    if ($null -eq $environment) {
+        $environment = $StartInfo.Environment
+    }
+
+    if ($null -ne $environment) {
+        $environment.Set_Item($Name, $Value)
+        return
+    }
+
+    throw 'Could not initialize process environment collection.'
+}
+
 function New-LocalCoopClientStartInfo {
     [CmdletBinding()]
     param(
@@ -626,14 +1473,25 @@ function New-LocalCoopClientStartInfo {
         [Parameter(Mandatory = $true)]
         [string]$GameRoot,
         [Parameter(Mandatory = $true)]
-        [string]$ClientConfigDirectory
+        [string]$ClientConfigDirectory,
+        [object]$WindowBounds,
+        [switch]$UseGameWindowArguments
     )
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.UseShellExecute = $false
     $startInfo.FileName = $GameExecutablePath
     $startInfo.WorkingDirectory = $GameRoot
-    $startInfo.UseShellExecute = $false
-    $startInfo.EnvironmentVariables['LOCALCOOP_CONFIG_DIR'] = $ClientConfigDirectory
+    $startInfo.Arguments = ''
+    if ($UseGameWindowArguments -and $null -ne $WindowBounds) {
+        $gameWindowArguments = Format-LocalCoopGameWindowArgumentList -WindowBounds $WindowBounds
+        $startInfo.Arguments = (($gameWindowArguments | ForEach-Object { ConvertTo-LocalCoopCommandLineArgument -Argument $_ }) -join ' ')
+    }
+
+    Set-LocalCoopStartInfoEnvironmentVariable `
+        -StartInfo $startInfo `
+        -Name 'LOCALCOOP_CONFIG_DIR' `
+        -Value $ClientConfigDirectory
     $startInfo
 }
 
@@ -645,13 +1503,15 @@ function Start-LocalCoopClientProcess {
         [Parameter(Mandatory = $true)]
         [string]$GameRoot,
         [Parameter(Mandatory = $true)]
-        [string]$ClientConfigDirectory
+        [string]$ClientConfigDirectory,
+        [object]$WindowBounds
     )
 
     $startInfo = New-LocalCoopClientStartInfo `
         -GameExecutablePath $GameExecutablePath `
         -GameRoot $GameRoot `
-        -ClientConfigDirectory $ClientConfigDirectory
+        -ClientConfigDirectory $ClientConfigDirectory `
+        -WindowBounds $WindowBounds
 
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
@@ -706,8 +1566,12 @@ function Invoke-LocalCoopClientStartup {
         [string]$DefaultHost = '127.0.0.1',
         [int]$DefaultPort = 38989,
         [int]$BrokerStartupTimeoutSeconds = 60,
+        [int]$WindowPlacementTimeoutSeconds = 30,
+        [int]$WindowPlacementStabilizationSeconds = 0,
+        [int]$WindowPlacementRetryIntervalMilliseconds = 1000,
         [switch]$ReuseExistingBroker,
         [switch]$SkipClientLaunch,
+        [switch]$SkipWindowPlacement,
         [switch]$NoWaitForBroker
     )
 
@@ -715,14 +1579,14 @@ function Invoke-LocalCoopClientStartup {
 
     $resolvedRepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
     if ([string]::IsNullOrWhiteSpace($GameRoot)) {
-        $GameRoot = (Resolve-Path -LiteralPath (Join-Path $resolvedRepoRoot '..')).Path
+        $GameRoot = Resolve-LocalCoopDefaultGameRoot -RepoRoot $resolvedRepoRoot
     }
     else {
         $GameRoot = (Resolve-Path -LiteralPath $GameRoot).Path
     }
 
     if ([string]::IsNullOrWhiteSpace($ConfigRoot)) {
-        $ConfigRoot = Join-Path $resolvedRepoRoot '.localcoop-clients'
+        $ConfigRoot = Get-LocalCoopDefaultConfigRoot -RepoRoot $resolvedRepoRoot
     }
 
     if ([string]::IsNullOrWhiteSpace($BrokerConfigPath)) {
@@ -794,19 +1658,52 @@ function Invoke-LocalCoopClientStartup {
 
     Clear-LocalCoopLaunchLogs -GameRoot $GameRoot
 
-    $clientDirectories = Get-LocalCoopClientConfigDirectories -ConfigRoot $ConfigRoot -ClientCount $ClientCount
+    $clientDirectories = @(Get-LocalCoopClientConfigDirectories -ConfigRoot $ConfigRoot -ClientCount $ClientCount)
+    $clientLaunches = @()
+    $screenBounds = $null
+    $windowPlacementPlan = @()
+    if (-not $SkipWindowPlacement) {
+        $screenBounds = Get-LocalCoopPrimaryScreenWorkingArea
+        $windowPlacementPlan = @(Get-LocalCoopClientWindowPlacementPlan -ScreenBounds $screenBounds -ClientCount $ClientCount)
+    }
 
-    foreach ($clientDirectory in $clientDirectories) {
+    for ($clientIndex = 0; $clientIndex -lt $clientDirectories.Count; $clientIndex++) {
+        $clientDirectory = $clientDirectories[$clientIndex]
         if (-not (Test-Path -LiteralPath (Join-Path $clientDirectory 'enable-local-broker.txt'))) {
             throw "Client config missing: $clientDirectory"
+        }
+
+        $windowBounds = $null
+        if ($windowPlacementPlan.Count -gt $clientIndex) {
+            $windowBounds = $windowPlacementPlan[$clientIndex]
         }
 
         $clientProcess = Start-LocalCoopClientProcess `
             -GameExecutablePath $gameExecutablePath `
             -GameRoot $GameRoot `
-            -ClientConfigDirectory $clientDirectory
+            -ClientConfigDirectory $clientDirectory `
+            -WindowBounds $windowBounds
 
         Write-Host ("Started STS2 client process id {0} using config {1}." -f $clientProcess.Id, $clientDirectory)
+        $clientLaunches += [pscustomobject]@{
+            ClientIndex = $clientIndex
+            Process = $clientProcess
+            ConfigDirectory = $clientDirectory
+        }
+    }
+
+    if (-not $SkipWindowPlacement) {
+        try {
+            Invoke-LocalCoopClientWindowPlacementStabilization `
+                -ClientLaunches $clientLaunches `
+                -ScreenBounds $screenBounds `
+                -TimeoutSeconds $WindowPlacementTimeoutSeconds `
+                -StabilizationSeconds $WindowPlacementStabilizationSeconds `
+                -RetryIntervalMilliseconds $WindowPlacementRetryIntervalMilliseconds
+        }
+        catch {
+            Write-Warning ("Could not place LocalCoop client windows: {0}" -f $_.Exception.Message)
+        }
     }
 
     if ($startedBrokerProcess -is [System.Diagnostics.Process] -and -not $NoWaitForBroker) {
@@ -826,8 +1723,12 @@ function Invoke-LocalCoopTwoClientStartup {
         [string]$DefaultHost = '127.0.0.1',
         [int]$DefaultPort = 38989,
         [int]$BrokerStartupTimeoutSeconds = 60,
+        [int]$WindowPlacementTimeoutSeconds = 30,
+        [int]$WindowPlacementStabilizationSeconds = 0,
+        [int]$WindowPlacementRetryIntervalMilliseconds = 1000,
         [switch]$ReuseExistingBroker,
         [switch]$SkipClientLaunch,
+        [switch]$SkipWindowPlacement,
         [switch]$NoWaitForBroker
     )
 
@@ -841,8 +1742,12 @@ function Invoke-LocalCoopTwoClientStartup {
         -DefaultHost $DefaultHost `
         -DefaultPort $DefaultPort `
         -BrokerStartupTimeoutSeconds $BrokerStartupTimeoutSeconds `
+        -WindowPlacementTimeoutSeconds $WindowPlacementTimeoutSeconds `
+        -WindowPlacementStabilizationSeconds $WindowPlacementStabilizationSeconds `
+        -WindowPlacementRetryIntervalMilliseconds $WindowPlacementRetryIntervalMilliseconds `
         -ReuseExistingBroker:$ReuseExistingBroker `
         -SkipClientLaunch:$SkipClientLaunch `
+        -SkipWindowPlacement:$SkipWindowPlacement `
         -NoWaitForBroker:$NoWaitForBroker
 }
 

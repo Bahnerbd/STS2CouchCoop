@@ -40,6 +40,74 @@ public sealed class SteamControllerInputSelectionTests
     }
 
     [TestMethod]
+    public void KeepsKnownControllerHandleWhenSteamHandleOrderChanges()
+    {
+        var selection = SteamControllerInputSelection.ChooseControllerHandle(
+            ["first", "third", "second"],
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            "second");
+
+        Assert.IsTrue(selection.Selected);
+        Assert.AreEqual(1, selection.Index);
+        Assert.AreEqual("second", selection.Handle);
+    }
+
+    [TestMethod]
+    public void DoesNotFallBackToOrdinalWhenKnownControllerHandleIsMissing()
+    {
+        var selection = SteamControllerInputSelection.ChooseControllerHandle(
+            ["first", "third", "fourth"],
+            BrokerControllerDeviceAssignment.ForDevice(2),
+            "second");
+
+        Assert.IsFalse(selection.Selected);
+        Assert.AreEqual(2, selection.Index);
+        StringAssert.Contains(selection.Reason, "previous selected Steam controller handle is disconnected");
+    }
+
+    [TestMethod]
+    public void TracksSelectedControllerDevice()
+    {
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        SteamControllerInputSelection.SetSelectedControllerDeviceForTesting(2);
+
+        Assert.IsTrue(SteamControllerInputSelection.IsSelectedControllerActive(
+            BrokerControllerDeviceAssignment.ForDevice(2)));
+        Assert.IsFalse(SteamControllerInputSelection.IsSelectedControllerActive(
+            BrokerControllerDeviceAssignment.ForDevice(1)));
+        Assert.IsFalse(SteamControllerInputSelection.IsSelectedControllerActive(
+            BrokerControllerDeviceAssignment.ForDevice(0)));
+        Assert.IsFalse(SteamControllerInputSelection.IsSelectedControllerActive(
+            BrokerControllerDeviceAssignment.None));
+    }
+
+    [TestMethod]
+    public void DetectsAlreadyAppliedSelectionByControllerDeviceAndHandle()
+    {
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        SteamControllerInputSelection.SetSelectedControllerDeviceForTesting(2);
+        var selectedHandle = new object();
+        var differentHandle = new object();
+
+        Assert.IsTrue(SteamControllerInputSelection.IsSelectionAlreadyAppliedForTesting(
+            BrokerControllerDeviceAssignment.ForDevice(2),
+            selectedHandle,
+            selectedHandle));
+        Assert.IsFalse(SteamControllerInputSelection.IsSelectionAlreadyAppliedForTesting(
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            selectedHandle,
+            selectedHandle));
+        Assert.IsFalse(SteamControllerInputSelection.IsSelectionAlreadyAppliedForTesting(
+            BrokerControllerDeviceAssignment.ForDevice(2),
+            differentHandle,
+            selectedHandle));
+        Assert.IsFalse(SteamControllerInputSelection.IsSelectionAlreadyAppliedForTesting(
+            BrokerControllerDeviceAssignment.None,
+            selectedHandle,
+            selectedHandle));
+    }
+
+    [TestMethod]
     public void TracksGeneratedInputEventsByReference()
     {
         var generated = new object();

@@ -98,6 +98,54 @@ try {
     $args = Format-LocalCoopBrokerArgumentList -SessionId 'local-test5' -Port 38993
     Assert-SequenceEqual $args @('src\LocalCoop.Broker.Cli\bin\Debug\net9.0-launch\LocalCoop.Broker.Cli.dll', 'local-test5', '38993') 'Broker argument list should launch the launch-specific built CLI directly.'
 
+    $fakeGameRoot = Join-Path $tempRoot 'game'
+    $fakePackageRoot = Join-Path $fakeGameRoot 'mods\LocalCoop'
+    $fakeBrokerDirectory = Join-Path $fakePackageRoot 'broker'
+    New-Item -ItemType Directory -Path $fakeBrokerDirectory -Force | Out-Null
+    $fakeBrokerExe = Join-Path $fakeBrokerDirectory 'LocalCoop.Broker.Cli.exe'
+    Set-Content -LiteralPath $fakeBrokerExe -Value 'broker'
+    Set-Content -LiteralPath (Join-Path $fakeGameRoot 'SlayTheSpire2.exe') -Value 'game'
+
+    Assert-Equal (Resolve-LocalCoopDefaultGameRoot -RepoRoot $fakePackageRoot) $fakeGameRoot 'Packaged install should resolve the game root from mods\LocalCoop.'
+    Assert-Equal (Resolve-LocalCoopDefaultGameRoot -RepoRoot $repoRoot) (Resolve-Path (Join-Path $repoRoot '..')).Path 'Dev checkout should resolve the game root from the repo parent.'
+
+    $oldAppData = $env:APPDATA
+    $env:APPDATA = Join-Path $tempRoot 'appdata'
+    try {
+        Assert-Equal (Get-LocalCoopDefaultConfigRoot -RepoRoot $fakePackageRoot) (Join-Path $env:APPDATA 'SlayTheSpire2\LocalCoop\clients') 'Packaged install should store generated client config under APPDATA.'
+        Assert-Equal (Get-LocalCoopDefaultRuntimeRoot -RepoRoot $fakePackageRoot) (Join-Path $env:APPDATA 'SlayTheSpire2\LocalCoop\runtime') 'Packaged install should store broker launcher logs under APPDATA.'
+
+        $packagedArgs = Format-LocalCoopBrokerArgumentList -RepoRoot $fakePackageRoot -SessionId 'portable-test' -Port 39001
+        Assert-SequenceEqual $packagedArgs @($fakeBrokerExe, 'portable-test', '39001') 'Packaged broker argument list should launch the broker executable directly.'
+
+        $packagedLauncherScript = Write-LocalCoopBrokerLauncherScript -RepoRoot $fakePackageRoot -SessionId 'portable-test' -Port 39001
+        $packagedLauncherContent = Get-Content -Raw -LiteralPath $packagedLauncherScript
+        Assert-True ($packagedLauncherContent.Contains($fakeBrokerExe)) 'Packaged broker launcher should reference the broker executable.'
+        Assert-True (-not $packagedLauncherContent.Contains('& dotnet @brokerArguments')) 'Packaged broker launcher should not invoke dotnet.'
+
+        $portableConfigRoot = Join-Path $tempRoot 'portable-configs'
+        Invoke-LocalCoopClientPreparation `
+            -RepoRoot $fakePackageRoot `
+            -ConfigRoot $portableConfigRoot `
+            -ClientCount 3 `
+            -SessionId 'portable-test' `
+            -Port 39001 `
+            -GameExecutablePath (Join-Path $fakeGameRoot 'SlayTheSpire2.exe') `
+            -ControllerDevices '0,none,2'
+
+        Assert-True (Test-Path -LiteralPath (Join-Path $portableConfigRoot 'client-0\enable-local-broker.txt')) 'Release mode should write host config without source harness.'
+        Assert-True (Test-Path -LiteralPath (Join-Path $portableConfigRoot 'client-1\enable-local-broker.txt')) 'Release mode should write client config without source harness.'
+        $portableClientConfig = Get-Content -Raw -LiteralPath (Join-Path $portableConfigRoot 'client-1\enable-local-broker.txt')
+        Assert-True ($portableClientConfig.Contains('role=client')) 'Release mode client config should mark nonzero clients as client role.'
+        Assert-True ($portableClientConfig.Contains('clientIndex=1')) 'Release mode client config should include the client index.'
+        Assert-True ($portableClientConfig.Contains('controllerDevice=none')) 'Release mode client config should preserve controller overrides.'
+        Assert-True ($portableClientConfig.Contains('endpoint=127.0.0.1:39001')) 'Release mode client config should include the broker endpoint.'
+        Assert-True ($portableClientConfig.Contains('sessionId=portable-test')) 'Release mode client config should include the session id.'
+    }
+    finally {
+        $env:APPDATA = $oldAppData
+    }
+
     $harnessArgs = Format-LocalCoopHarnessPreparationArgumentList `
         -ConfigRoot '.localcoop-clients' `
         -SessionId 'local-test5' `

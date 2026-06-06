@@ -17,12 +17,15 @@ public sealed class LocalCoopPatchInstallerTests
                 typeof(LocalCoop.Mod.Patches.BrokerJoinFriendScreenPatch),
                 typeof(LocalCoop.Mod.Patches.BrokerLobbyServiceSubstitutionPatch),
                 typeof(LocalCoop.Mod.Patches.BrokerBeginRunPatch),
+                typeof(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches),
+                typeof(LocalCoop.Mod.Patches.ControllerInputOwnershipPatches),
                 typeof(LocalCoop.Mod.Patches.RunIdentityLaunchPatch),
                 typeof(LocalCoop.Mod.Patches.RunIdentityDualRoleAdventureVoidGuardPatch),
                 typeof(LocalCoop.Mod.Patches.RunIdentityDualRoleAdventureBoolGuardPatch),
                 typeof(LocalCoop.Mod.Patches.RunIdentityLocalUiAlignmentPatch),
                 typeof(LocalCoop.Mod.Patches.RunIdentityRewardAlignmentPatch),
                 typeof(LocalCoop.Mod.Patches.RunIdentityPotionAnimationGuardPatch),
+                typeof(LocalCoop.Mod.Patches.RunIdentityRelicInventoryVisualGuardPatch),
                 typeof(LocalCoop.Mod.Patches.RunIdentityRemoteEventUiGuardPatch),
                 typeof(LocalCoop.Mod.Patches.RunIdentityLocalActionGuardPatch),
                 typeof(LocalCoop.Mod.Patches.RunIdentityRemoteMutationGuardPatch),
@@ -72,6 +75,41 @@ public sealed class LocalCoopPatchInstallerTests
         Assert.AreEqual(
             "MegaCrit.Sts2.Core.Nodes.Screens.MainMenu.NMultiplayerSubmenu",
             target.DeclaringType?.FullName);
+    }
+
+    [TestMethod]
+    public void SteamControllerInputSelectionPatchReplacesNativeUpdateOnlyWhenControllerAssignmentIsConfigured()
+    {
+        var configuredController = new BrokerModeSettings(
+            Enabled: true,
+            Config: new BrokerClientConfig(
+                BrokerClientRole.Client,
+                ClientIndex: 1,
+                Host: "127.0.0.1",
+                Port: 38989,
+                SessionId: "local-test",
+                ControllerDevice: BrokerControllerDeviceAssignment.ForDevice(1)),
+            ClientId: "client-1",
+            EventLogPath: "events.txt",
+            FailureReason: null);
+        var noController = configuredController with
+        {
+            Config = configuredController.Config! with { ControllerDevice = BrokerControllerDeviceAssignment.None }
+        };
+        var missingControllerConfig = configuredController with
+        {
+            Config = configuredController.Config! with { ControllerDevice = default }
+        };
+        var disabled = configuredController with { Enabled = false };
+
+        Assert.IsTrue(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches.ShouldReplaceNativeUpdateControllerConnectionsForTesting(
+            configuredController));
+        Assert.IsTrue(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches.ShouldReplaceNativeUpdateControllerConnectionsForTesting(
+            noController));
+        Assert.IsFalse(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches.ShouldReplaceNativeUpdateControllerConnectionsForTesting(
+            missingControllerConfig));
+        Assert.IsFalse(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches.ShouldReplaceNativeUpdateControllerConnectionsForTesting(
+            disabled));
     }
 
     [TestMethod]

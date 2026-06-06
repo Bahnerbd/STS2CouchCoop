@@ -9,8 +9,12 @@ param(
     [string]$DefaultHost = '127.0.0.1',
     [int]$DefaultPort = 38989,
     [int]$BrokerStartupTimeoutSeconds = 60,
+    [int]$WindowPlacementTimeoutSeconds = 30,
+    [int]$WindowPlacementStabilizationSeconds = 0,
+    [int]$WindowPlacementRetryIntervalMilliseconds = 1000,
     [switch]$ReuseExistingBroker,
     [switch]$SkipClientLaunch,
+    [switch]$SkipWindowPlacement,
     [switch]$NoWaitForBroker
 )
 

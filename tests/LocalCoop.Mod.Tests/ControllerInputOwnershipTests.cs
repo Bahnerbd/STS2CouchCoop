@@ -350,6 +350,58 @@ public sealed class ControllerInputOwnershipTests
     }
 
     [TestMethod]
+    public void NativeJoypadInputIsSuppressedWhenSelectedSteamControllerIsActive()
+    {
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldSuppressNativeControllerInputForSelectedSteamControllerForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NHotkeyManager",
+            "_UnhandledInput",
+            new FakeJoypadButton(device: 3),
+            BrokerControllerDeviceAssignment.ForDevice(3),
+            selectedControllerActive: true));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldSuppressNativeControllerInputForSelectedSteamControllerForTesting(
+            "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen",
+            "_Input",
+            new FakeJoypadButton(device: 3),
+            BrokerControllerDeviceAssignment.ForDevice(3),
+            selectedControllerActive: true));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldSuppressNativeControllerInputForSelectedSteamControllerForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NHotkeyManager",
+            "_UnhandledInput",
+            new FakeJoypadButton(device: 3),
+            BrokerControllerDeviceAssignment.ForDevice(3),
+            selectedControllerActive: false));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldSuppressNativeControllerInputForSelectedSteamControllerForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NHotkeyManager",
+            "_UnhandledInput",
+            new FakeJoypadButton(device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(0),
+            selectedControllerActive: true));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldSuppressNativeControllerInputForSelectedSteamControllerForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NControllerManager",
+            "_Input",
+            new FakeJoypadButton(device: 3),
+            BrokerControllerDeviceAssignment.ForDevice(3),
+            selectedControllerActive: true));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldSuppressNativeControllerInputForSelectedSteamControllerForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NHotkeyManager",
+            "_UnhandledInput",
+            new FakeInputEventAction("controller_d_pad_south", device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(3),
+            selectedControllerActive: true));
+    }
+
+    [TestMethod]
+    public void SuppressedControllerInputLoggingSkipsMotionAndReleases()
+    {
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldLogSuppressedControllerInputForTesting(
+            new FakeJoypadButton(device: 3, pressed: true)));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldLogSuppressedControllerInputForTesting(
+            new FakeInputEventJoypadMotion(device: 3)));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldLogSuppressedControllerInputForTesting(
+            new FakeInputEventAction("controller_face_button_south", device: 0, pressed: false)));
+    }
+
+    [TestMethod]
     public void ControllerOwnershipPatchLogLinesIncludeMethodAndBoundaryContext()
     {
         var inputEvent = new FakeInputEventAction("controller_d_pad_south", device: 0);
@@ -372,9 +424,10 @@ public sealed class ControllerInputOwnershipTests
         StringAssert.Contains(line, "boundary=selectedSteamController companionDispatched=True");
     }
 
-    private sealed class FakeJoypadButton(int device)
+    private sealed class FakeJoypadButton(int device, bool pressed = true)
     {
         public int Device { get; } = device;
+        public bool Pressed { get; } = pressed;
     }
 
     private sealed class FakeInputEventAction(string action, int device, bool pressed = true)

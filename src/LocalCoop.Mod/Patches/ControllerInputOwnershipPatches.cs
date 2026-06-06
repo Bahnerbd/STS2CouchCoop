@@ -99,6 +99,30 @@ public static class ControllerInputOwnershipPatches
             return true;
         }
 
+        var isSelectedControllerActive = SteamControllerInputSelection.IsSelectedControllerActive(
+            settings.Config.ControllerDevice);
+        if (ShouldSuppressNativeControllerInputForSelectedSteamController(
+            typeName,
+            methodName,
+            inputEvent,
+            settings.Config.ControllerDevice,
+            isSelectedControllerActive))
+        {
+            var nativeDuplicateResult = ControllerInputOwnership.ShouldProcess(inputEvent, settings.Config.ControllerDevice) with
+            {
+                ShouldProcess = false,
+                Reason = "selected Steam controller active; native Godot controller input suppressed"
+            };
+            MarkInputHandled(__instance, inputEvent);
+            LogSuppressedIfUseful(
+                settings,
+                inputEvent,
+                nativeDuplicateResult,
+                __instance,
+                __originalMethod);
+            return false;
+        }
+
         if (ShouldSuppressGeneratedSteamInputForNativeControllerDeviceZero(
             typeName,
             methodName,
@@ -179,13 +203,13 @@ public static class ControllerInputOwnershipPatches
         }
 
         MarkInputHandled(__instance, inputEvent);
-        new BrokerEventLog(settings.EventLogPath).Write(
-            FormatControllerOwnershipLogLine(
-                result,
-                inputEvent,
-                __instance.GetType().Name,
-                __originalMethod.Name,
-                $"generatedSteamInput={isGeneratedSteamInput} generatedOriginalSteamInput={isGeneratedOriginalSteamInput}"));
+        LogSuppressedIfUseful(
+            settings,
+            inputEvent,
+            result,
+            __instance,
+            __originalMethod,
+            suffix: $"generatedSteamInput={isGeneratedSteamInput} generatedOriginalSteamInput={isGeneratedOriginalSteamInput}");
         return false;
     }
 
@@ -262,6 +286,28 @@ public static class ControllerInputOwnershipPatches
             methodName,
             assignment,
             selectedSteamInput);
+    }
+
+    public static bool ShouldSuppressNativeControllerInputForSelectedSteamControllerForTesting(
+        string typeName,
+        string methodName,
+        object? inputEvent,
+        BrokerControllerDeviceAssignment assignment,
+        bool selectedControllerActive)
+    {
+        return ShouldSuppressNativeControllerInputForSelectedSteamController(
+            typeName,
+            methodName,
+            inputEvent,
+            assignment,
+            selectedControllerActive);
+    }
+
+    public static bool ShouldLogSuppressedControllerInputForTesting(
+        object? inputEvent,
+        bool includeUnpressed = false)
+    {
+        return ShouldLogControllerInput(inputEvent, includeUnpressed);
     }
 
     private static bool ShouldTrustSelectedSteamControllerBoundary(
@@ -346,6 +392,30 @@ public static class ControllerInputOwnershipPatches
             && ShouldConsumeGeneratedUiCompanionAtSink(typeName, methodName);
     }
 
+    private static bool ShouldSuppressNativeControllerInputForSelectedSteamController(
+        string typeName,
+        string methodName,
+        object? inputEvent,
+        BrokerControllerDeviceAssignment assignment,
+        bool selectedControllerActive)
+    {
+        return selectedControllerActive
+            && IsAssignedSelectedSteamDevice(assignment)
+            && IsGlobalMenuSink(typeName, methodName)
+            && IsNativeJoypadInput(inputEvent);
+    }
+
+    private static bool IsNativeJoypadInput(object? inputEvent)
+    {
+        if (inputEvent is null)
+        {
+            return false;
+        }
+
+        var inputTypeName = inputEvent.GetType().FullName ?? inputEvent.GetType().Name;
+        return inputTypeName.Contains("Joypad", StringComparison.OrdinalIgnoreCase);
+    }
+
     private static bool IsControllerManagerObserver(
         string typeName,
         string methodName)
@@ -424,7 +494,7 @@ public static class ControllerInputOwnershipPatches
                 "boundary=selectedOriginalSteamController"));
     }
 
-    private static void LogAllowedIfUseful(
+    private static void LogSuppressedIfUseful(
         BrokerModeSettings settings,
         object? inputEvent,
         ControllerInputOwnershipResult result,
@@ -433,7 +503,7 @@ public static class ControllerInputOwnershipPatches
         bool includeUnpressed = false,
         string? suffix = null)
     {
-        if (!includeUnpressed && !IsPressedInput(inputEvent))
+        if (!ShouldLogControllerInput(inputEvent, includeUnpressed))
         {
             return;
         }
@@ -445,6 +515,36 @@ public static class ControllerInputOwnershipPatches
                 instance.GetType().Name,
                 method.Name,
                 suffix));
+    }
+
+    private static void LogAllowedIfUseful(
+        BrokerModeSettings settings,
+        object? inputEvent,
+        ControllerInputOwnershipResult result,
+        object instance,
+        MethodBase method,
+        bool includeUnpressed = false,
+        string? suffix = null)
+    {
+        if (!ShouldLogControllerInput(inputEvent, includeUnpressed))
+        {
+            return;
+        }
+
+        new BrokerEventLog(settings.EventLogPath).Write(
+            FormatControllerOwnershipLogLine(
+                result,
+                inputEvent,
+                instance.GetType().Name,
+                method.Name,
+                suffix));
+    }
+
+    private static bool ShouldLogControllerInput(object? inputEvent, bool includeUnpressed)
+    {
+        return includeUnpressed
+            ? inputEvent is not null
+            : IsPressedInput(inputEvent);
     }
 
     private static string FormatControllerOwnershipLogLine(

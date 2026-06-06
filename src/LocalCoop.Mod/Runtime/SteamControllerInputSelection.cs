@@ -18,6 +18,9 @@ public static class SteamControllerInputSelection
     private static readonly Dictionary<string, Queue<DateTimeOffset>> PendingOriginalSteamControllerInputs = new(StringComparer.Ordinal);
     private static readonly TimeSpan UiCompanionTokenLifetime = TimeSpan.FromMilliseconds(250);
     private static string? _lastSelectionSummary;
+    private static int? _selectedControllerDevice;
+    private static int? _knownControllerDevice;
+    private static object? _knownControllerHandle;
 
     public static SteamControllerHandleSelection<T> ChooseControllerHandle<T>(
         IReadOnlyList<T> handles,
@@ -49,6 +52,45 @@ public static class SteamControllerInputSelection
             Reason: $"selected controllerDevice={index}");
     }
 
+    public static SteamControllerHandleSelection<T> ChooseControllerHandle<T>(
+        IReadOnlyList<T> handles,
+        BrokerControllerDeviceAssignment assignment,
+        T? knownControllerHandle)
+    {
+        if (!assignment.IsConfigured || assignment.Device is null)
+        {
+            return new SteamControllerHandleSelection<T>(
+                Selected: false,
+                Index: -1,
+                Handle: default,
+                Reason: "controllerDevice is unconfigured or none");
+        }
+
+        var index = assignment.Device.Value;
+        if (knownControllerHandle is null)
+        {
+            return ChooseControllerHandle(handles, assignment);
+        }
+
+        foreach (var handle in handles)
+        {
+            if (EqualityComparer<T>.Default.Equals(handle, knownControllerHandle))
+            {
+                return new SteamControllerHandleSelection<T>(
+                    Selected: true,
+                    Index: index,
+                    Handle: handle,
+                    Reason: $"retained previous selected Steam controller handle for controllerDevice={index}");
+            }
+        }
+
+        return new SteamControllerHandleSelection<T>(
+            Selected: false,
+            Index: index,
+            Handle: default,
+            Reason: $"previous selected Steam controller handle is disconnected for controllerDevice={index}; refusing ordinal fallback");
+    }
+
     public static bool IsGeneratedInputEvent(object? inputEvent)
     {
         if (inputEvent is null)
@@ -59,6 +101,19 @@ public static class SteamControllerInputSelection
         lock (Lock)
         {
             return GeneratedInputEvents.Contains(inputEvent);
+        }
+    }
+
+    public static bool IsSelectedControllerActive(BrokerControllerDeviceAssignment assignment)
+    {
+        if (!assignment.IsConfigured || assignment.Device is not > 0)
+        {
+            return false;
+        }
+
+        lock (Lock)
+        {
+            return _selectedControllerDevice == assignment.Device.Value;
         }
     }
 
@@ -318,7 +373,26 @@ public static class SteamControllerInputSelection
             PendingUiCompanionActions.Clear();
             PendingOriginalSteamControllerInputs.Clear();
             _lastSelectionSummary = null;
+            _selectedControllerDevice = null;
+            _knownControllerDevice = null;
+            _knownControllerHandle = null;
         }
+    }
+
+    public static void SetSelectedControllerDeviceForTesting(int? controllerDevice)
+    {
+        lock (Lock)
+        {
+            _selectedControllerDevice = controllerDevice;
+        }
+    }
+
+    public static bool IsSelectionAlreadyAppliedForTesting(
+        BrokerControllerDeviceAssignment assignment,
+        object? currentHandle,
+        object? selectedHandle)
+    {
+        return IsSelectionAlreadyApplied(assignment, currentHandle, selectedHandle);
     }
 
     private static void AcceptGeneratedUiCompanionInputEvent(object? inputEvent)
@@ -339,18 +413,31 @@ public static class SteamControllerInputSelection
         BrokerControllerDeviceAssignment assignment,
         Action<string> log)
     {
-        if (!assignment.IsConfigured || assignment.Device is null)
+        if (!assignment.IsConfigured)
         {
+            ClearSelectedControllerIdentity();
             return;
         }
 
         try
         {
+            if (assignment.Device is null)
+            {
+                ClearGeneratedInputEvents();
+                ClearSelectedControllerIdentity();
+                ClearCurrentControllerHandle(strategy);
+                ClearPressedInputs(strategy);
+                return;
+            }
+
             var handles = GetConnectedControllerHandles(strategy);
-            var selection = ChooseControllerHandle(handles, assignment);
+            var selection = ChooseControllerHandle(handles, assignment, GetKnownControllerHandle(assignment));
             if (!selection.Selected || selection.Handle is null)
             {
                 ClearGeneratedInputEvents();
+                ClearSelectedControllerDevice();
+                ClearCurrentControllerHandle(strategy);
+                ClearPressedInputs(strategy);
                 LogIfChanged(
                     $"Steam controller selection: unavailable controllerDevice={selection.Index} connected={handles.Count} reason={selection.Reason}.",
                     log);
@@ -358,6 +445,11 @@ public static class SteamControllerInputSelection
             }
 
             var previousHandle = GetCurrentControllerHandle(strategy);
+            if (IsSelectionAlreadyApplied(assignment, previousHandle, selection.Handle))
+            {
+                return;
+            }
+
             SetCurrentControllerHandle(strategy, selection.Handle);
             RefreshControllerConfig(strategy, selection.Handle);
             RegisterGeneratedInputEventsFromStrategy(strategy);
@@ -367,6 +459,7 @@ public static class SteamControllerInputSelection
                 ClearPressedInputs(strategy);
             }
 
+            SetSelectedControllerDevice(selection.Index, selection.Handle);
             LogIfChanged(
                 $"Steam controller selection: selected controllerDevice={selection.Index} handle={selection.Handle} connected={handles.Count}.",
                 log);
@@ -374,9 +467,29 @@ public static class SteamControllerInputSelection
         catch (Exception exception) when (exception is TargetInvocationException or MissingMemberException or InvalidOperationException or ArgumentException)
         {
             ClearGeneratedInputEvents();
+            ClearSelectedControllerDevice();
             LogIfChanged(
                 $"Steam controller selection failed: {exception.GetType().Name}: {exception.Message}",
                 log);
+        }
+    }
+
+    private static bool IsSelectionAlreadyApplied(
+        BrokerControllerDeviceAssignment assignment,
+        object? currentHandle,
+        object? selectedHandle)
+    {
+        if (!assignment.IsConfigured
+            || assignment.Device is null
+            || selectedHandle is null
+            || !Equals(currentHandle, selectedHandle))
+        {
+            return false;
+        }
+
+        lock (Lock)
+        {
+            return _selectedControllerDevice == assignment.Device.Value;
         }
     }
 
@@ -417,6 +530,13 @@ public static class SteamControllerInputSelection
         var field = strategy.GetType().GetField("_currentControllerHandle", Members)
             ?? throw new MissingMemberException(strategy.GetType().FullName, "_currentControllerHandle");
         field.SetValue(strategy, handle);
+    }
+
+    private static void ClearCurrentControllerHandle(object strategy)
+    {
+        var field = strategy.GetType().GetField("_currentControllerHandle", Members)
+            ?? throw new MissingMemberException(strategy.GetType().FullName, "_currentControllerHandle");
+        field.SetValue(strategy, null);
     }
 
     private static void RefreshControllerConfig(object strategy, object handle)
@@ -479,6 +599,49 @@ public static class SteamControllerInputSelection
             AcceptedOriginalSteamControllerInputEvents.Clear();
             PendingUiCompanionActions.Clear();
             PendingOriginalSteamControllerInputs.Clear();
+        }
+    }
+
+    private static object? GetKnownControllerHandle(BrokerControllerDeviceAssignment assignment)
+    {
+        if (!assignment.IsConfigured || assignment.Device is null)
+        {
+            return null;
+        }
+
+        lock (Lock)
+        {
+            return _knownControllerDevice == assignment.Device.Value
+                ? _knownControllerHandle
+                : null;
+        }
+    }
+
+    private static void SetSelectedControllerDevice(int controllerDevice, object handle)
+    {
+        lock (Lock)
+        {
+            _selectedControllerDevice = controllerDevice;
+            _knownControllerDevice = controllerDevice;
+            _knownControllerHandle = handle;
+        }
+    }
+
+    private static void ClearSelectedControllerDevice()
+    {
+        lock (Lock)
+        {
+            _selectedControllerDevice = null;
+        }
+    }
+
+    private static void ClearSelectedControllerIdentity()
+    {
+        lock (Lock)
+        {
+            _selectedControllerDevice = null;
+            _knownControllerDevice = null;
+            _knownControllerHandle = null;
         }
     }
 

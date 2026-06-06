@@ -36,6 +36,44 @@ dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-clients .loca
 dotnet run --project src\LocalCoop.Broker.Cli -- local-test 38989
 ```
 
+## Build A Portable Release
+
+This repo can produce a Windows manual-install zip for STS2 `v0.103.3`.
+
+```powershell
+.\Build-LocalCoopRelease.ps1 -GameRoot '..' -Version 0.1.0 -OutputRoot artifacts\release
+```
+
+The release artifact is named like:
+
+```text
+artifacts\release\LocalCoop-v0.1.0-sts2-v0.103.3-win-x64.zip
+```
+
+The zip contains only the `LocalCoop` mod folder, launch scripts, manifest, and packaged loopback broker. It intentionally excludes STS2 binaries, local marker files, logs, probes, source-only harness output, and debug symbols by default.
+
+## Portable Install
+
+1. Extract the zip so the folder lands at:
+
+```text
+Slay the Spire 2\mods\LocalCoop
+```
+
+2. Start local clients from that folder:
+
+```powershell
+.\Start-LocalCoopClients.ps1 -ClientCount 4 -ControllerDevices '0,1,2,3'
+```
+
+In a packaged install, generated client configs and broker launcher logs are written under:
+
+```text
+%APPDATA%\SlayTheSpire2\LocalCoop
+```
+
+The packaged launcher uses `broker\LocalCoop.Broker.Cli.exe` directly. A source checkout still uses the local `dotnet` broker/harness workflow for development.
+
 ## Broker Config
 
 `enable-local-broker.txt` supports these keys:
@@ -64,6 +102,8 @@ For a one-command launcher that starts a fresh broker, prepares configs, and lau
 ```powershell
 .\Start-LocalCoopClients.ps1 -ClientCount 4 -ControllerDevices '0,1,2,3'
 ```
+
+The launcher does one post-launch Win32 placement pass after the windows appear: client 0 top-left, client 1 top-right, client 2 bottom-left, and client 3 bottom-right. It does not pass STS2/Godot native window position args by default because STS2 can apply them later during startup on multi-monitor setups. It also does not keep retrying placement by default, so the windows remain manually resizable once the first pass finishes. Use `-SkipWindowPlacement` to leave windows untouched, or `-WindowPlacementStabilizationSeconds <seconds>` to add post-launch placement retries; when retries are enabled, `-WindowPlacementTimeoutSeconds <seconds>` controls how long the launcher waits for each STS2 main window.
 
 The controller list is optional. By default, client index maps to controller device index. Use `none` for a client with no assigned controller, for example `-ControllerDevices '0,1,none,3'`.
 

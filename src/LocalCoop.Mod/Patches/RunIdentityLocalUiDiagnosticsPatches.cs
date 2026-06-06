@@ -86,12 +86,22 @@ public static class PeerInputOwnershipDiagnosticsPatches
 
     public static void Prefix(MethodBase __originalMethod, object? __instance, object?[] __args)
     {
+        if (!RunIdentityDiagnostics.ShouldLogPeerInputDiagnostics("peer-input-ownership-enter", __originalMethod))
+        {
+            return;
+        }
+
         RunIdentityDiagnostics.EnsureCorrelation("peer-input");
         RunIdentityDiagnostics.LogLocalUiBoundary("peer-input-ownership-enter", __originalMethod, __instance, __args);
     }
 
     public static void Postfix(MethodBase __originalMethod, object? __instance, object?[] __args)
     {
+        if (!RunIdentityDiagnostics.ShouldLogPeerInputDiagnostics("peer-input-ownership-exit", __originalMethod))
+        {
+            return;
+        }
+
         RunIdentityDiagnostics.LogLocalUiBoundary("peer-input-ownership-exit", __originalMethod, __instance, __args);
     }
 }
