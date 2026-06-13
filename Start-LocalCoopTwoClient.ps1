@@ -8,6 +8,8 @@ param(
     [int]$DefaultPort = 38989,
     [int]$BrokerStartupTimeoutSeconds = 60,
     [int]$WindowPlacementTimeoutSeconds = 30,
+    [int]$WindowPlacementReadinessTimeoutSeconds = 90,
+    [int]$WindowPlacementStartupDelaySeconds = 0,
     [int]$WindowPlacementStabilizationSeconds = 15,
     [int]$WindowPlacementRetryIntervalMilliseconds = 1000,
     [switch]$ReuseExistingBroker,
@@ -717,6 +719,118 @@ function Get-LocalCoopClientWindowPlacementPlan {
     }
 }
 
+function Get-LocalCoopClientEventLogPath {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GameRoot,
+        [Parameter(Mandatory = $true)]
+        [string]$ClientConfigDirectory,
+        [Parameter(Mandatory = $true)]
+        [int]$ClientIndex
+    )
+
+    $role = if ($ClientIndex -eq 0) { 'host' } else { 'client' }
+    $configPath = Join-Path $ClientConfigDirectory 'enable-local-broker.txt'
+    if (Test-Path -LiteralPath $configPath) {
+        foreach ($line in Get-Content -LiteralPath $configPath) {
+            $trimmed = $line.Trim()
+            if ($trimmed.StartsWith('role=', [StringComparison]::OrdinalIgnoreCase)) {
+                $configuredRole = $trimmed.Substring(5).Trim().ToLowerInvariant()
+                if ($configuredRole -eq 'host' -or $configuredRole -eq 'client') {
+                    $role = $configuredRole
+                }
+
+                break
+            }
+        }
+    }
+
+    Join-Path $GameRoot ("mods\LocalCoop\localcoop-{0}-{1}-events.txt" -f $role, $ClientIndex)
+}
+
+function Test-LocalCoopClientStartupLog {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        return $false
+    }
+
+    try {
+        $content = Get-Content -Raw -LiteralPath $Path -ErrorAction Stop
+        return $content.IndexOf('Broker mode enabled:', [StringComparison]::Ordinal) -ge 0
+    }
+    catch {
+        return $false
+    }
+}
+
+function Wait-LocalCoopClientStartupLogs {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$ClientLaunches,
+        [Parameter(Mandatory = $true)]
+        [string]$GameRoot,
+        [Parameter(Mandatory = $true)]
+        [int]$TimeoutSeconds,
+        [int]$PollIntervalMilliseconds = 250,
+        [scriptblock]$TestStartupLog = {
+            param($path)
+            Test-LocalCoopClientStartupLog -Path $path
+        },
+        [scriptblock]$SleepMilliseconds = {
+            param($milliseconds)
+            Start-Sleep -Milliseconds $milliseconds
+        }
+    )
+
+    if ($TimeoutSeconds -lt 0) {
+        throw 'Window placement readiness timeout must be zero or greater.'
+    }
+
+    if ($PollIntervalMilliseconds -le 0) {
+        throw 'Window placement readiness poll interval must be positive.'
+    }
+
+    $pending = @{}
+    foreach ($clientLaunch in $ClientLaunches) {
+        $eventLogPath = Get-LocalCoopClientEventLogPath `
+            -GameRoot $GameRoot `
+            -ClientConfigDirectory $clientLaunch.ConfigDirectory `
+            -ClientIndex $clientLaunch.ClientIndex
+        $pending[$clientLaunch.ClientIndex] = $eventLogPath
+    }
+
+    $stopwatch = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($pending.Count -gt 0) {
+        foreach ($clientIndex in @($pending.Keys)) {
+            if (& $TestStartupLog $pending[$clientIndex]) {
+                [void]$pending.Remove($clientIndex)
+            }
+        }
+
+        if ($pending.Count -eq 0) {
+            Write-Host 'All LocalCoop client startup logs are ready; placing windows.'
+            return $true
+        }
+
+        if ($stopwatch.Elapsed.TotalSeconds -ge $TimeoutSeconds) {
+            $missing = ($pending.GetEnumerator() | Sort-Object Key | ForEach-Object { "client $($_.Key): $($_.Value)" }) -join '; '
+            Write-Warning ("Timed out waiting for LocalCoop client startup logs before window placement: {0}" -f $missing)
+            return $false
+        }
+
+        & $SleepMilliseconds $PollIntervalMilliseconds
+    }
+
+    $true
+}
+
 function Get-LocalCoopWindowPlacementAttemptCount {
     [CmdletBinding()]
     param(
@@ -1112,6 +1226,7 @@ function Invoke-LocalCoopClientWindowPlacementStabilization {
         [object]$ScreenBounds,
         [Parameter(Mandatory = $true)]
         [int]$TimeoutSeconds,
+        [int]$InitialDelayMilliseconds = 0,
         [Parameter(Mandatory = $true)]
         [int]$StabilizationSeconds,
         [Parameter(Mandatory = $true)]
@@ -1130,6 +1245,10 @@ function Invoke-LocalCoopClientWindowPlacementStabilization {
         }
     )
 
+    if ($InitialDelayMilliseconds -lt 0) {
+        throw 'Window placement initial delay must be zero or greater.'
+    }
+
     $placements = @()
     foreach ($clientLaunch in $ClientLaunches) {
         $bounds = Get-LocalCoopClientWindowBounds -ScreenBounds $ScreenBounds -ClientIndex $clientLaunch.ClientIndex
@@ -1144,6 +1263,10 @@ function Invoke-LocalCoopClientWindowPlacementStabilization {
     $attemptCount = Get-LocalCoopWindowPlacementAttemptCount `
         -StabilizationSeconds $StabilizationSeconds `
         -RetryIntervalMilliseconds $RetryIntervalMilliseconds
+
+    if ($InitialDelayMilliseconds -gt 0) {
+        & $SleepMilliseconds $InitialDelayMilliseconds
+    }
 
     for ($attempt = 0; $attempt -lt $attemptCount; $attempt++) {
         foreach ($placement in $placements) {
@@ -1725,6 +1848,8 @@ function Invoke-LocalCoopClientStartup {
         [int]$DefaultPort = 38989,
         [int]$BrokerStartupTimeoutSeconds = 60,
         [int]$WindowPlacementTimeoutSeconds = 30,
+        [int]$WindowPlacementReadinessTimeoutSeconds = 90,
+        [int]$WindowPlacementStartupDelaySeconds = 0,
         [int]$WindowPlacementStabilizationSeconds = 15,
         [int]$WindowPlacementRetryIntervalMilliseconds = 1000,
         [switch]$ReuseExistingBroker,
@@ -1858,10 +1983,16 @@ function Invoke-LocalCoopClientStartup {
 
     if (-not $SkipWindowPlacement) {
         try {
+            [void](Wait-LocalCoopClientStartupLogs `
+                -ClientLaunches $clientLaunches `
+                -GameRoot $GameRoot `
+                -TimeoutSeconds $WindowPlacementReadinessTimeoutSeconds)
+
             Invoke-LocalCoopClientWindowPlacementStabilization `
                 -ClientLaunches $clientLaunches `
                 -ScreenBounds $screenBounds `
                 -TimeoutSeconds $WindowPlacementTimeoutSeconds `
+                -InitialDelayMilliseconds ($WindowPlacementStartupDelaySeconds * 1000) `
                 -StabilizationSeconds $WindowPlacementStabilizationSeconds `
                 -RetryIntervalMilliseconds $WindowPlacementRetryIntervalMilliseconds
         }
@@ -1888,6 +2019,8 @@ function Invoke-LocalCoopTwoClientStartup {
         [int]$DefaultPort = 38989,
         [int]$BrokerStartupTimeoutSeconds = 60,
         [int]$WindowPlacementTimeoutSeconds = 30,
+        [int]$WindowPlacementReadinessTimeoutSeconds = 90,
+        [int]$WindowPlacementStartupDelaySeconds = 0,
         [int]$WindowPlacementStabilizationSeconds = 15,
         [int]$WindowPlacementRetryIntervalMilliseconds = 1000,
         [switch]$ReuseExistingBroker,
@@ -1907,6 +2040,8 @@ function Invoke-LocalCoopTwoClientStartup {
         -DefaultPort $DefaultPort `
         -BrokerStartupTimeoutSeconds $BrokerStartupTimeoutSeconds `
         -WindowPlacementTimeoutSeconds $WindowPlacementTimeoutSeconds `
+        -WindowPlacementReadinessTimeoutSeconds $WindowPlacementReadinessTimeoutSeconds `
+        -WindowPlacementStartupDelaySeconds $WindowPlacementStartupDelaySeconds `
         -WindowPlacementStabilizationSeconds $WindowPlacementStabilizationSeconds `
         -WindowPlacementRetryIntervalMilliseconds $WindowPlacementRetryIntervalMilliseconds `
         -ReuseExistingBroker:$ReuseExistingBroker `

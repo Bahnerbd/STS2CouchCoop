@@ -13,6 +13,14 @@ if ($scriptContent -notmatch '\[int\]\$WindowPlacementStabilizationSeconds\s*=\s
     throw 'Start-LocalCoopClients.ps1 should keep placing windows during the game startup resize window by default.'
 }
 
+if ($scriptContent -notmatch '\[int\]\$WindowPlacementReadinessTimeoutSeconds\s*=\s*90') {
+    throw 'Start-LocalCoopClients.ps1 should wait for LocalCoop startup readiness before placing windows by default.'
+}
+
+if ($scriptContent -notmatch '\[int\]\$WindowPlacementStartupDelaySeconds\s*=\s*0') {
+    throw 'Start-LocalCoopClients.ps1 should not use a blind startup delay by default.'
+}
+
 . $scriptPath
 
 function Assert-Equal($actual, $expected, [string]$message) {
@@ -145,6 +153,84 @@ try {
     Assert-Equal (Get-LocalCoopWindowPlacementAttemptCount -StabilizationSeconds 0 -RetryIntervalMilliseconds 1000) 1 'Zero-second stabilization should place windows once without retrying.'
     Assert-Equal (Get-LocalCoopWindowPlacementAttemptCount -StabilizationSeconds 5 -RetryIntervalMilliseconds 1000) 6 'Stabilization should include the immediate attempt and each retry tick.'
     Assert-Throws { Get-LocalCoopWindowPlacementAttemptCount -StabilizationSeconds 5 -RetryIntervalMilliseconds 0 } 'positive' 'Placement retry interval validation should reject zero.'
+
+    $hostConfigDirectory = Join-Path $tempRoot 'client-0'
+    $remoteConfigDirectory = Join-Path $tempRoot 'client-1'
+    $readinessGameRoot = Join-Path $tempRoot 'readiness-game'
+    New-Item -ItemType Directory -Path $hostConfigDirectory, $remoteConfigDirectory -Force | Out-Null
+    Set-Content -LiteralPath (Join-Path $hostConfigDirectory 'enable-local-broker.txt') -Value @('role=host', 'clientIndex=0')
+    Set-Content -LiteralPath (Join-Path $remoteConfigDirectory 'enable-local-broker.txt') -Value @('role=client', 'clientIndex=1')
+
+    Assert-Equal (Get-LocalCoopClientEventLogPath -GameRoot $readinessGameRoot -ClientConfigDirectory $hostConfigDirectory -ClientIndex 0) (Join-Path $readinessGameRoot 'mods\LocalCoop\localcoop-host-0-events.txt') 'Host event log path should follow the configured broker role.'
+    Assert-Equal (Get-LocalCoopClientEventLogPath -GameRoot $readinessGameRoot -ClientConfigDirectory $remoteConfigDirectory -ClientIndex 1) (Join-Path $readinessGameRoot 'mods\LocalCoop\localcoop-client-1-events.txt') 'Client event log path should follow the configured broker role.'
+
+    $readyLogPath = Join-Path $tempRoot 'ready-events.txt'
+    Set-Content -LiteralPath $readyLogPath -Value 'Broker mode enabled: clientId=client-0 role=Host endpoint=127.0.0.1:38989 sessionId=local-test.'
+    Assert-True (Test-LocalCoopClientStartupLog -Path $readyLogPath) 'Startup log readiness should detect the broker enabled marker.'
+
+    $script:readinessAttempts = 0
+    $script:readinessSleeps = @()
+    $readinessObserved = Wait-LocalCoopClientStartupLogs `
+        -ClientLaunches @([pscustomobject]@{
+            ClientIndex = 0
+            Process = [pscustomobject]@{ Id = 42 }
+            ConfigDirectory = $hostConfigDirectory
+        }) `
+        -GameRoot $readinessGameRoot `
+        -TimeoutSeconds 5 `
+        -PollIntervalMilliseconds 250 `
+        -TestStartupLog {
+            param($path)
+            $script:readinessAttempts++
+            $script:readinessAttempts -ge 2
+        } `
+        -SleepMilliseconds {
+            param($milliseconds)
+            $script:readinessSleeps += $milliseconds.ToString()
+        }
+
+    Assert-True $readinessObserved 'Window placement readiness wait should succeed once startup logs are observed.'
+    Assert-SequenceEqual $script:readinessSleeps @('250') 'Window placement readiness wait should poll until the startup log marker appears.'
+
+    $script:placementEvents = @()
+    Invoke-LocalCoopClientWindowPlacementStabilization `
+        -ClientLaunches @([pscustomobject]@{
+            ClientIndex = 0
+            Process = [pscustomobject]@{ Id = 42 }
+            ConfigDirectory = 'client-0'
+        }) `
+        -ScreenBounds $screenBounds `
+        -TimeoutSeconds 0 `
+        -InitialDelayMilliseconds 0 `
+        -StabilizationSeconds 0 `
+        -RetryIntervalMilliseconds 1000 `
+        -ResolveWindowHandle {
+            $script:placementEvents += 'resolve'
+            [IntPtr]::new(101)
+        } `
+        -MoveWindow {
+            param($windowHandle, $bounds)
+            $script:placementEvents += 'move'
+        } `
+        -SleepMilliseconds {
+            param($milliseconds)
+            $script:placementEvents += ('sleep:{0}' -f $milliseconds)
+        }
+
+    Assert-SequenceEqual $script:placementEvents @('resolve', 'move') 'Window placement should resolve and move after startup readiness is handled by the caller.'
+    Assert-Throws {
+        Invoke-LocalCoopClientWindowPlacementStabilization `
+            -ClientLaunches @([pscustomobject]@{
+                ClientIndex = 0
+                Process = [pscustomobject]@{ Id = 42 }
+                ConfigDirectory = 'client-0'
+            }) `
+            -ScreenBounds $screenBounds `
+            -TimeoutSeconds 0 `
+            -InitialDelayMilliseconds -1 `
+            -StabilizationSeconds 0 `
+            -RetryIntervalMilliseconds 1000
+    } 'zero or greater' 'Placement initial delay validation should reject negative values.'
 
     $script:movedWindowHandles = @()
     Invoke-LocalCoopClientWindowPlacementStabilization `
