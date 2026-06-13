@@ -27,11 +27,40 @@ See [AGENTS.md](AGENTS.md) for the repo's agent-facing development rules.
 - The broker transports opaque envelopes and preserves sender/target identity.
 - `client-0` may be a harness default, but it should not be treated as the semantic host in future runtime design.
 
+## Fresh Development Setup
+
+Requirements:
+
+- Slay the Spire 2 installed locally.
+- .NET 9 SDK installed.
+- A clone of this repo. The repo may be inside the STS2 install folder or anywhere else.
+
+If the repo is cloned directly under the game folder as `Slay the Spire 2\LocalCoopMod`, the default build paths work without extra properties:
+
+```powershell
+dotnet restore LocalCoopTransport.sln
+dotnet test LocalCoopTransport.sln -p:OutputPath=bin\Debug\net9.0-test\
+dotnet build src\LocalCoop.Mod\LocalCoop.Mod.csproj
+```
+
+If the repo is cloned somewhere else, pass the game root explicitly:
+
+```powershell
+$gameRoot = 'D:\SteamLibrary\steamapps\common\Slay the Spire 2'
+dotnet restore LocalCoopTransport.sln
+dotnet test LocalCoopTransport.sln -p:Sts2GameRoot="$gameRoot" -p:OutputPath=bin\Debug\net9.0-test\
+dotnet build src\LocalCoop.Mod\LocalCoop.Mod.csproj -p:Sts2GameRoot="$gameRoot"
+```
+
+The mod build writes to:
+
+```text
+<Sts2GameRoot>\mods\LocalCoop\LocalCoop.dll
+```
+
 ## Run
 
 ```powershell
-dotnet test LocalCoopTransport.sln --no-restore -p:OutputPath=bin\Debug\net9.0-test\
-dotnet build src\LocalCoop.Mod\LocalCoop.Mod.csproj
 dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-clients .localcoop-clients 4 local-test 38989
 dotnet run --project src\LocalCoop.Broker.Cli -- local-test 38989
 ```
@@ -43,6 +72,14 @@ This repo can produce a Windows manual-install zip for STS2 `v0.103.3`.
 ```powershell
 .\Build-LocalCoopRelease.ps1 -GameRoot '..' -Version 0.1.0 -OutputRoot artifacts\release
 ```
+
+From a checkout outside the game folder, pass the absolute game root:
+
+```powershell
+.\Build-LocalCoopRelease.ps1 -GameRoot 'D:\SteamLibrary\steamapps\common\Slay the Spire 2' -Version 0.1.0 -OutputRoot artifacts\release
+```
+
+The release script restores its packaged runtime projects by default. If you have already restored them, add `-SkipRestore`.
 
 The release artifact is named like:
 

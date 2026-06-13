@@ -4,6 +4,6 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
+    <Sts2GameRoot Condition="'$(Sts2GameRoot)' == ''">$(MSBuildThisFileDirectory)..</Sts2GameRoot>
   </PropertyGroup>
 </Project>
-

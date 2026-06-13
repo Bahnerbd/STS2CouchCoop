@@ -4,8 +4,7 @@
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <Sts2GameRoot Condition="'$(Sts2GameRoot)' == ''">$(MSBuildThisFileDirectory)..\..\..</Sts2GameRoot>
-    <LocalCoopModOutputPath Condition="'$(LocalCoopModOutputPath)' == ''">$(MSBuildThisFileDirectory)..\..\..\mods\LocalCoop\</LocalCoopModOutputPath>
+    <LocalCoopModOutputPath Condition="'$(LocalCoopModOutputPath)' == ''">$(Sts2GameRoot)\mods\LocalCoop\</LocalCoopModOutputPath>
     <OutputPath>$(LocalCoopModOutputPath)</OutputPath>
   </PropertyGroup>
   <ItemGroup>

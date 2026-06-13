@@ -2,7 +2,8 @@ param(
     [string]$GameRoot = (Join-Path $PSScriptRoot '..'),
     [string]$Version = '0.1.0',
     [string]$OutputRoot = (Join-Path $PSScriptRoot 'artifacts\release'),
-    [switch]$IncludeSymbols
+    [switch]$IncludeSymbols,
+    [switch]$SkipRestore
 )
 
 Set-StrictMode -Version Latest
@@ -198,7 +199,8 @@ function Invoke-LocalCoopReleaseBuild {
         [string]$Version,
         [Parameter(Mandatory = $true)]
         [string]$OutputRoot,
-        [switch]$IncludeSymbols
+        [switch]$IncludeSymbols,
+        [switch]$SkipRestore
     )
 
     if ([string]::IsNullOrWhiteSpace($Version)) {
@@ -230,6 +232,22 @@ function Invoke-LocalCoopReleaseBuild {
     New-Item -ItemType Directory -Path $brokerRoot -Force | Out-Null
 
     $modOutputPath = $packageRoot + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $SkipRestore) {
+        $restorePlans = @(
+            @('src\LocalCoop.Mod\LocalCoop.Mod.csproj'),
+            @('src\LocalCoop.Protocol\LocalCoop.Protocol.csproj'),
+            @('src\LocalCoop.Broker.Cli\LocalCoop.Broker.Cli.csproj', '-r', 'win-x64')
+        )
+        foreach ($restorePlan in $restorePlans) {
+            $project = $restorePlan[0]
+            $restoreArguments = @('restore') + $restorePlan + @('--disable-parallel')
+            Invoke-LocalCoopDotNet `
+                -WorkingDirectory $repoRoot `
+                -FailureMessage "LocalCoop restore failed for $project." `
+                -Arguments $restoreArguments
+        }
+    }
+
     Invoke-LocalCoopDotNet `
         -WorkingDirectory $repoRoot `
         -FailureMessage 'LocalCoop mod build failed.' `
@@ -265,6 +283,7 @@ function Invoke-LocalCoopReleaseBuild {
             'Release',
             '-r',
             'win-x64',
+            '--no-restore',
             '--self-contained',
             'true',
             '-p:PublishSingleFile=true',
@@ -314,5 +333,6 @@ if ($MyInvocation.InvocationName -ne '.') {
         -GameRoot $GameRoot `
         -Version $Version `
         -OutputRoot $OutputRoot `
-        -IncludeSymbols:$IncludeSymbols
+        -IncludeSymbols:$IncludeSymbols `
+        -SkipRestore:$SkipRestore
 }
