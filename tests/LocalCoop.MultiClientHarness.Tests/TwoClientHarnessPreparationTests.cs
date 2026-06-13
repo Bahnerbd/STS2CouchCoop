@@ -29,7 +29,8 @@ public sealed class TwoClientHarnessPreparationTests
         StringAssert.Contains(result.LaunchCommands[3], result.ConfigSetup.Clients[3].Directory);
 
         var client2Config = File.ReadAllText(Path.Combine(result.ConfigSetup.Clients[2].Directory, "enable-local-broker.txt"));
-        StringAssert.Contains(client2Config, "controllerDevice=none");
+        StringAssert.Contains(client2Config, "playerSlot=2");
+        StringAssert.Contains(client2Config, "inputMode=none");
     }
 
     [TestMethod]

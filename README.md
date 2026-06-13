@@ -74,6 +74,18 @@ In a packaged install, generated client configs and broker launcher logs are wri
 
 The packaged launcher uses `broker\LocalCoop.Broker.Cli.exe` directly. A source checkout still uses the local `dotnet` broker/harness workflow for development.
 
+Because LocalCoop launches `SlayTheSpire2.exe` directly to give each client its own config directory, the launcher ensures this file exists beside the game executable:
+
+```text
+steam_appid.txt
+```
+
+with the STS2 app id:
+
+```text
+2868840
+```
+
 ## Broker Config
 
 `enable-local-broker.txt` supports these keys:
@@ -81,12 +93,15 @@ The packaged launcher uses `broker\LocalCoop.Broker.Cli.exe` directly. A source 
 ```text
 role=host|client
 clientIndex=0..3
-controllerDevice=0..3|none
+playerSlot=0..3
+inputMode=auto|none
 endpoint=127.0.0.1:<port>
 sessionId=<id>
 ```
 
-`controllerDevice` is optional for compatibility. When present, STS2's Steam controller strategy is steered to the matching connected-controller ordinal for that process, and raw joypad/controller input from other devices is suppressed. Use `controllerDevice=none` for keyboard-only processes.
+`playerSlot` and `inputMode` are the canonical input assignment keys. `inputMode=auto` lets LocalCoop prefer Steam Input and fall back to XInput/Godot controller routing when needed. Use `inputMode=none` for keyboard-only processes.
+
+`controllerDevice=0..3|none` is still accepted for compatibility. Integer values map to `playerSlot`; `none` maps to `inputMode=none`.
 
 ## Manual Four-Client Smoke
 

@@ -99,6 +99,7 @@ function Assert-LocalCoopReleaseLayout {
         'LocalCoop.dll',
         'LocalCoop.Protocol.dll',
         'broker\LocalCoop.Broker.Cli.exe',
+        'Start-LocalCoop4Players.bat',
         'Start-LocalCoopClients.ps1',
         'Start-LocalCoopTwoClient.ps1'
     )
@@ -275,6 +276,7 @@ function Invoke-LocalCoopReleaseBuild {
 
     Copy-Item -LiteralPath (Join-Path $repoRoot 'Start-LocalCoopClients.ps1') -Destination $packageRoot -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'Start-LocalCoopTwoClient.ps1') -Destination $packageRoot -Force
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'Start-LocalCoop4Players.bat') -Destination $packageRoot -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $packageRoot -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'release\LocalCoop.json') -Destination (Join-Path $packageRoot 'LocalCoop.json') -Force
     Update-LocalCoopReleaseManifestVersion -ManifestPath (Join-Path $packageRoot 'LocalCoop.json') -Version $Version

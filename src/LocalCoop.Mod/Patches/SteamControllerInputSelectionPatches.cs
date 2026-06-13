@@ -23,7 +23,7 @@ public static class SteamControllerInputSelectionPatches
 
         SteamControllerInputSelection.ApplySelection(
             __instance,
-            settings.Config!.ControllerDevice,
+            ControllerAssignmentService.Resolve(settings.Config!).ControllerDevice,
             message => new BrokerEventLog(settings.EventLogPath).Write(message));
         return false;
     }
@@ -37,7 +37,7 @@ public static class SteamControllerInputSelectionPatches
     {
         return settings.Enabled
             && settings.Config is not null
-            && settings.Config.ControllerDevice.IsConfigured;
+            && ControllerAssignmentService.Resolve(settings.Config).ControllerDevice.IsConfigured;
     }
 
     private static BrokerModeSettings LoadSettings()

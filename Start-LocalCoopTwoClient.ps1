@@ -117,6 +117,26 @@ function Resolve-LocalCoopDefaultGameRoot {
     (Resolve-Path -LiteralPath (Join-Path $resolvedRepoRoot '..')).Path
 }
 
+function Ensure-LocalCoopSteamAppIdFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$GameRoot
+    )
+
+    $steamAppIdPath = Join-Path $GameRoot 'steam_appid.txt'
+    if (Test-Path -LiteralPath $steamAppIdPath -PathType Leaf) {
+        return
+    }
+
+    try {
+        Set-Content -LiteralPath $steamAppIdPath -Value '2868840'
+    }
+    catch {
+        throw "Steam app id file is missing and could not be created at $steamAppIdPath. Create that file manually with the value 2868840, then run the launcher again. $($_.Exception.Message)"
+    }
+}
+
 function Get-LocalCoopUserStateRoot {
     [CmdletBinding()]
     param()
@@ -1223,6 +1243,53 @@ function ConvertFrom-LocalCoopControllerDeviceList {
     }
 }
 
+function Get-LocalCoopDetectedControllerCount {
+    [CmdletBinding()]
+    param()
+
+    try {
+        $controllers = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
+            Where-Object {
+                $name = $_.Name
+                -not [string]::IsNullOrWhiteSpace($name) -and
+                    ($name -match '(?i)(xinput|gamepad|controller|xbox|dualsense|dualshock|playstation|steam)')
+            } |
+            Select-Object -ExpandProperty PNPDeviceID -Unique
+
+        return @($controllers).Count
+    }
+    catch {
+        return 0
+    }
+}
+
+function Write-LocalCoopControllerAssignmentDiagnostics {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [int]$ClientCount,
+        [string]$ControllerDevices
+    )
+
+    $resolvedDevices = @(ConvertFrom-LocalCoopControllerDeviceList -ControllerDevices $ControllerDevices -ClientCount $ClientCount)
+    $requestedControllerCount = @($resolvedDevices | Where-Object { -not [string]::Equals($_, 'none', [StringComparison]::OrdinalIgnoreCase) }).Count
+    $detectedControllerCount = Get-LocalCoopDetectedControllerCount
+
+    if ($requestedControllerCount -gt $detectedControllerCount) {
+        Write-Warning ("Requested {0} controller-backed LocalCoop clients, but Windows prelaunch detection found {1} controller candidate(s). Steam Input may still resolve additional handles at runtime." -f $requestedControllerCount, $detectedControllerCount)
+    }
+
+    for ($clientIndex = 0; $clientIndex -lt $resolvedDevices.Count; $clientIndex++) {
+        $device = $resolvedDevices[$clientIndex]
+        if ([string]::Equals($device, 'none', [StringComparison]::OrdinalIgnoreCase)) {
+            Write-Host ("Controller assignment: client={0} playerSlot={0} inputMode=none fallback=keyboard-only" -f $clientIndex)
+            continue
+        }
+
+        Write-Host ("Controller assignment: client={0} playerSlot={1} inputMode=auto resolvedController=runtime SteamHandle=runtime SteamInputType=runtime XInputSlot=runtime GodotJoyId=runtime fallback=SteamInput,XInput,Godot" -f $clientIndex, $device)
+    }
+}
+
 function Format-LocalCoopClientBrokerConfig {
     [CmdletBinding()]
     param(
@@ -1251,10 +1318,24 @@ function Format-LocalCoopClientBrokerConfig {
     }
 
     $role = if ($ClientIndex -eq 0) { 'host' } else { 'client' }
+    $playerSlot = if ([string]::Equals($ControllerDevice, 'none', [StringComparison]::OrdinalIgnoreCase)) {
+        $ClientIndex.ToString()
+    }
+    else {
+        $ControllerDevice
+    }
+    $inputMode = if ([string]::Equals($ControllerDevice, 'none', [StringComparison]::OrdinalIgnoreCase)) {
+        'none'
+    }
+    else {
+        'auto'
+    }
+
     @(
         "role=$role"
         "clientIndex=$ClientIndex"
-        "controllerDevice=$ControllerDevice"
+        "playerSlot=$playerSlot"
+        "inputMode=$inputMode"
         "endpoint=$($HostName):$Port"
         "sessionId=$SessionId"
         ''
@@ -1598,6 +1679,8 @@ function Invoke-LocalCoopClientStartup {
         throw "Game executable not found: $gameExecutablePath"
     }
 
+    Ensure-LocalCoopSteamAppIdFile -GameRoot $GameRoot
+
     $broker = Read-LocalCoopBrokerConfig `
         -ConfigPath $BrokerConfigPath `
         -DefaultSessionId $DefaultSessionId `
@@ -1636,6 +1719,10 @@ function Invoke-LocalCoopClientStartup {
             throw "Broker did not start listening on $($broker.Host):$($broker.Port) within $BrokerStartupTimeoutSeconds seconds."
         }
     }
+
+    Write-LocalCoopControllerAssignmentDiagnostics `
+        -ClientCount $ClientCount `
+        -ControllerDevices $ControllerDevices
 
     Invoke-LocalCoopClientPreparation `
         -RepoRoot $resolvedRepoRoot `

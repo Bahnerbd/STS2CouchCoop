@@ -80,6 +80,56 @@ public sealed class BrokerClientConfigTests
     }
 
     [TestMethod]
+    public void ParsesCanonicalPlayerSlotAndInputMode()
+    {
+        var config = BrokerClientConfig.Parse("""
+            role=client
+            clientIndex=2
+            playerSlot=3
+            inputMode=auto
+            endpoint=127.0.0.1:38989
+            sessionId=local-test
+            """);
+
+        Assert.AreEqual(3, config.PlayerSlot);
+        Assert.AreEqual(BrokerClientInputMode.Auto, config.InputMode);
+        Assert.IsTrue(config.ControllerDevice.IsConfigured);
+        Assert.AreEqual(3, config.ControllerDevice.Device);
+    }
+
+    [TestMethod]
+    public void LegacyControllerDeviceIntegerMapsToPlayerSlot()
+    {
+        var config = BrokerClientConfig.Parse("""
+            role=client
+            clientIndex=1
+            controllerDevice=2
+            endpoint=127.0.0.1:38989
+            sessionId=local-test
+            """);
+
+        Assert.AreEqual(2, config.PlayerSlot);
+        Assert.AreEqual(BrokerClientInputMode.Auto, config.InputMode);
+    }
+
+    [TestMethod]
+    public void LegacyControllerDeviceNoneMapsToInputModeNone()
+    {
+        var config = BrokerClientConfig.Parse("""
+            role=client
+            clientIndex=1
+            controllerDevice=none
+            endpoint=127.0.0.1:38989
+            sessionId=local-test
+            """);
+
+        Assert.AreEqual(1, config.PlayerSlot);
+        Assert.AreEqual(BrokerClientInputMode.None, config.InputMode);
+        Assert.IsTrue(config.ControllerDevice.IsConfigured);
+        Assert.IsNull(config.ControllerDevice.Device);
+    }
+
+    [TestMethod]
     public void ParsesDisabledControllerDevice()
     {
         var config = BrokerClientConfig.Parse("""
@@ -104,8 +154,10 @@ public sealed class BrokerClientConfigTests
             sessionId=local-test
             """);
 
-        Assert.IsFalse(config.ControllerDevice.IsConfigured);
-        Assert.IsNull(config.ControllerDevice.Device);
+        Assert.AreEqual(1, config.PlayerSlot);
+        Assert.AreEqual(BrokerClientInputMode.Auto, config.InputMode);
+        Assert.IsTrue(config.ControllerDevice.IsConfigured);
+        Assert.AreEqual(1, config.ControllerDevice.Device);
     }
 
     [TestMethod]

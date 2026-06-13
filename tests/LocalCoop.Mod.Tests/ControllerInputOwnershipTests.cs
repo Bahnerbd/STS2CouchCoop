@@ -119,7 +119,7 @@ public sealed class ControllerInputOwnershipTests
             new FakeInputEventAction("controller_d_pad_south", device: 0),
             BrokerControllerDeviceAssignment.ForDevice(1),
             selectedSteamInput: false));
-        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldTrustSelectedSteamControllerBoundaryForTesting(
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldTrustSelectedSteamControllerBoundaryForTesting(
             "MegaCrit.Sts2.Core.Nodes.CommonUi.NControllerManager",
             "_Input",
             new FakeInputEventAction("controller_d_pad_south", device: 0),
@@ -148,7 +148,7 @@ public sealed class ControllerInputOwnershipTests
             new FakeInputEventJoypadMotion(device: 0),
             BrokerControllerDeviceAssignment.ForDevice(1),
             selectedSteamInput: true));
-        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldTrustSelectedOriginalSteamControllerBoundaryForTesting(
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldTrustSelectedOriginalSteamControllerBoundaryForTesting(
             "MegaCrit.Sts2.Core.Nodes.CommonUi.NControllerManager",
             "_Input",
             new FakeInputEventJoypadMotion(device: 0),
@@ -177,6 +177,67 @@ public sealed class ControllerInputOwnershipTests
         Assert.IsFalse(ControllerInputOwnershipPatches.ShouldConsumeGeneratedUiCompanionAtSinkForTesting(
             "MegaCrit.Sts2.Core.Nodes.CommonUi.NControllerManager",
             "_Input"));
+    }
+
+    [TestMethod]
+    public void OnlyRealInputSinksConsumeGeneratedNativeActions()
+    {
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldConsumeGeneratedNativeActionAtSinkForTesting(
+            "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen",
+            "_Input"));
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldConsumeGeneratedNativeActionAtSinkForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NHotkeyManager",
+            "_UnhandledInput"));
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldConsumeGeneratedNativeActionAtSinkForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager",
+            "_UnhandledInput"));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldConsumeGeneratedNativeActionAtSinkForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NControllerManager",
+            "_Input"));
+    }
+
+    [TestMethod]
+    public void NativeGeneratedActionFromSelectedSteamControllerIsTrustedAtSink()
+    {
+        var now = new DateTimeOffset(2026, 6, 12, 22, 30, 0, TimeSpan.Zero);
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        SteamControllerInputSelection.SetNativeGeneratedActionMapForTesting(
+            new Dictionary<string, string>
+            {
+                ["controller_face_button_west"] = "mega_top_panel"
+            });
+        SteamControllerInputSelection.RegisterGeneratedNativeAction(
+            new FakeInputEventAction("controller_face_button_west", device: 0),
+            now);
+
+        var isGeneratedNativeAction = SteamControllerInputSelection.TryConsumeGeneratedNativeInputEvent(
+            new FakeInputEventAction("mega_top_panel", device: 0),
+            now.AddMilliseconds(10));
+        var result = ControllerInputOwnership.ShouldProcess(
+            new FakeInputEventAction("mega_top_panel", device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            trustAsSelectedControllerInput: isGeneratedNativeAction);
+
+        Assert.IsTrue(isGeneratedNativeAction);
+        Assert.IsTrue(result.ShouldProcess);
+        StringAssert.Contains(result.Reason, "selected Steam controller");
+    }
+
+    [TestMethod]
+    public void NativeGeneratedActionWithoutSelectedSteamTokenIsSuppressed()
+    {
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+
+        var isGeneratedNativeAction = SteamControllerInputSelection.TryConsumeGeneratedNativeInputEvent(
+            new FakeInputEventAction("mega_top_panel", device: 0));
+        var result = ControllerInputOwnership.ShouldProcess(
+            new FakeInputEventAction("mega_top_panel", device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            trustAsSelectedControllerInput: isGeneratedNativeAction);
+
+        Assert.IsFalse(isGeneratedNativeAction);
+        Assert.IsFalse(result.ShouldProcess);
+        StringAssert.Contains(result.Reason, "assigned controllerDevice=1");
     }
 
     [TestMethod]
@@ -233,9 +294,9 @@ public sealed class ControllerInputOwnershipTests
     }
 
     [TestMethod]
-    public void RealInputSinksTrustUnmappedOriginalSelectedSteamControllerInputs()
+    public void RealInputSinksTrustOnlyUnmappedOriginalSelectedSteamControllerInputs()
     {
-        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldTrustSelectedSteamInputAtSinkForTesting(
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldTrustSelectedSteamInputAtSinkForTesting(
             "MegaCrit.Sts2.Core.Nodes.CommonUi.NHotkeyManager",
             "_UnhandledInput",
             new FakeInputEventAction("controller_face_button_west", device: 0),
@@ -288,6 +349,12 @@ public sealed class ControllerInputOwnershipTests
             new FakeInputEventAction("controller_face_button_south", device: 0),
             BrokerControllerDeviceAssignment.ForDevice(1),
             selectedSteamInput: true));
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldBridgeSelectedSteamInputAtSinkForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager",
+            "_UnhandledInput",
+            new FakeInputEventAction("controller_face_button_west", device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            selectedSteamInput: true));
         Assert.IsFalse(ControllerInputOwnershipPatches.ShouldBridgeSelectedSteamInputAtSinkForTesting(
             "MegaCrit.Sts2.Core.Nodes.CommonUi.NControllerManager",
             "_Input",
@@ -320,14 +387,14 @@ public sealed class ControllerInputOwnershipTests
     }
 
     [TestMethod]
-    public void GeneratedSteamInputIsSuppressedForNativeControllerDeviceZeroAtSinks()
+    public void GeneratedSteamInputIsNotSpecialCasedForPlayerSlotZeroAtSinks()
     {
-        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldSuppressGeneratedSteamInputForNativeControllerDeviceZeroForTesting(
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldSuppressGeneratedSteamInputForNativeControllerDeviceZeroForTesting(
             "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen",
             "_Input",
             BrokerControllerDeviceAssignment.ForDevice(0),
             selectedSteamInput: true));
-        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldSuppressGeneratedSteamInputForNativeControllerDeviceZeroForTesting(
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldSuppressGeneratedSteamInputForNativeControllerDeviceZeroForTesting(
             "MegaCrit.Sts2.Core.Nodes.CommonUi.NHotkeyManager",
             "_UnhandledInput",
             BrokerControllerDeviceAssignment.ForDevice(0),
@@ -370,7 +437,7 @@ public sealed class ControllerInputOwnershipTests
             new FakeJoypadButton(device: 3),
             BrokerControllerDeviceAssignment.ForDevice(3),
             selectedControllerActive: false));
-        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldSuppressNativeControllerInputForSelectedSteamControllerForTesting(
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldSuppressNativeControllerInputForSelectedSteamControllerForTesting(
             "MegaCrit.Sts2.Core.Nodes.CommonUi.NHotkeyManager",
             "_UnhandledInput",
             new FakeJoypadButton(device: 0),

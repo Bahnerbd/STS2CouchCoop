@@ -53,16 +53,17 @@ public sealed class SteamControllerInputSelectionTests
     }
 
     [TestMethod]
-    public void DoesNotFallBackToOrdinalWhenKnownControllerHandleIsMissing()
+    public void FallsBackToConfiguredSlotWhenKnownControllerHandleIsMissing()
     {
         var selection = SteamControllerInputSelection.ChooseControllerHandle(
             ["first", "third", "fourth"],
             BrokerControllerDeviceAssignment.ForDevice(2),
             "second");
 
-        Assert.IsFalse(selection.Selected);
+        Assert.IsTrue(selection.Selected);
         Assert.AreEqual(2, selection.Index);
-        StringAssert.Contains(selection.Reason, "previous selected Steam controller handle is disconnected");
+        Assert.AreEqual("fourth", selection.Handle);
+        StringAssert.Contains(selection.Reason, "reacquired configured playerSlot=2");
     }
 
     [TestMethod]
@@ -73,10 +74,12 @@ public sealed class SteamControllerInputSelectionTests
 
         Assert.IsTrue(SteamControllerInputSelection.IsSelectedControllerActive(
             BrokerControllerDeviceAssignment.ForDevice(2)));
+        SteamControllerInputSelection.SetSelectedControllerDeviceForTesting(0);
+        Assert.IsTrue(SteamControllerInputSelection.IsSelectedControllerActive(
+            BrokerControllerDeviceAssignment.ForDevice(0)));
+        SteamControllerInputSelection.SetSelectedControllerDeviceForTesting(2);
         Assert.IsFalse(SteamControllerInputSelection.IsSelectedControllerActive(
             BrokerControllerDeviceAssignment.ForDevice(1)));
-        Assert.IsFalse(SteamControllerInputSelection.IsSelectedControllerActive(
-            BrokerControllerDeviceAssignment.ForDevice(0)));
         Assert.IsFalse(SteamControllerInputSelection.IsSelectedControllerActive(
             BrokerControllerDeviceAssignment.None));
     }
@@ -255,6 +258,106 @@ public sealed class SteamControllerInputSelectionTests
     }
 
     [TestMethod]
+    public void DerivesNativeGeneratedActionMapFromNativeControllerConfig()
+    {
+        var config = new FakeControllerConfig(
+            new Dictionary<string, string>
+            {
+                ["Top_Panel"] = "controller_face_button_west",
+                ["Select"] = "controller_face_button_south"
+            },
+            new Dictionary<string, string>
+            {
+                ["mega_top_panel"] = "controller_face_button_west",
+                ["mega_select"] = "controller_face_button_south"
+            });
+
+        var map = SteamControllerInputSelection.CreateNativeGeneratedActionMapForTesting(config);
+
+        Assert.AreEqual("mega_top_panel", map["controller_face_button_west"]);
+        Assert.AreEqual("mega_select", map["controller_face_button_south"]);
+    }
+
+    [TestMethod]
+    public void DerivesPs4TouchpadNativeGeneratedActionMapFromNativeControllerConfig()
+    {
+        var config = new FakeControllerConfig(
+            new Dictionary<string, string>
+            {
+                ["View_Map"] = "controller_ps4_touchpad"
+            },
+            new Dictionary<string, string>
+            {
+                ["mega_view_map"] = "controller_ps4_touchpad"
+            });
+
+        var map = SteamControllerInputSelection.CreateNativeGeneratedActionMapForTesting(config);
+
+        Assert.AreEqual("mega_view_map", map["controller_ps4_touchpad"]);
+    }
+
+    [TestMethod]
+    public void ConsumesNativeGeneratedActionForSelectedSteamControllerAction()
+    {
+        var now = new DateTimeOffset(2026, 6, 12, 22, 30, 0, TimeSpan.Zero);
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        SteamControllerInputSelection.SetNativeGeneratedActionMapForTesting(
+            new Dictionary<string, string>
+            {
+                ["controller_face_button_west"] = "mega_top_panel"
+            });
+
+        SteamControllerInputSelection.RegisterGeneratedNativeAction(
+            new FakeInputEventAction("controller_face_button_west", device: 0),
+            now);
+
+        Assert.IsTrue(SteamControllerInputSelection.TryConsumeGeneratedNativeInputEvent(
+            new FakeInputEventAction("mega_top_panel", device: 0),
+            now.AddMilliseconds(10)));
+        Assert.IsFalse(SteamControllerInputSelection.TryConsumeGeneratedNativeInputEvent(
+            new FakeInputEventAction("mega_top_panel", device: 0),
+            now.AddMilliseconds(20)));
+    }
+
+    [TestMethod]
+    public void NativeGeneratedActionTokenExpiresAndDoesNotMatchOtherActions()
+    {
+        var now = new DateTimeOffset(2026, 6, 12, 22, 30, 0, TimeSpan.Zero);
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        SteamControllerInputSelection.SetNativeGeneratedActionMapForTesting(
+            new Dictionary<string, string>
+            {
+                ["controller_face_button_west"] = "mega_top_panel"
+            });
+
+        SteamControllerInputSelection.RegisterGeneratedNativeAction(
+            new FakeInputEventAction("controller_face_button_west", device: 0),
+            now);
+
+        Assert.IsFalse(SteamControllerInputSelection.TryConsumeGeneratedNativeInputEvent(
+            new FakeInputEventAction("mega_view_map", device: 0),
+            now.AddMilliseconds(10)));
+        Assert.IsFalse(SteamControllerInputSelection.TryConsumeGeneratedNativeInputEvent(
+            new FakeInputEventAction("mega_top_panel", device: 0),
+            now.AddMilliseconds(251)));
+    }
+
+    [TestMethod]
+    public void FallsBackToObservedXboxTopPanelNativeActionWhenConfigMapIsUnavailable()
+    {
+        var now = new DateTimeOffset(2026, 6, 12, 22, 30, 0, TimeSpan.Zero);
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+
+        SteamControllerInputSelection.RegisterGeneratedNativeAction(
+            new FakeInputEventAction("controller_face_button_west", device: 0),
+            now);
+
+        Assert.IsTrue(SteamControllerInputSelection.TryConsumeGeneratedNativeInputEvent(
+            new FakeInputEventAction("mega_top_panel", device: 0),
+            now.AddMilliseconds(10)));
+    }
+
+    [TestMethod]
     public void ConsumesGeneratedOriginalSteamControllerMotionByShapeForSinkClone()
     {
         SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
@@ -285,5 +388,13 @@ public sealed class SteamControllerInputSelectionTests
     {
         public int Device { get; } = device;
         public int Axis { get; } = axis;
+    }
+
+    private sealed class FakeControllerConfig(
+        Dictionary<string, string> steamInputControllerMap,
+        Dictionary<string, string> defaultControllerInputMap)
+    {
+        public Dictionary<string, string> SteamInputControllerMap { get; } = steamInputControllerMap;
+        public Dictionary<string, string> DefaultControllerInputMap { get; } = defaultControllerInputMap;
     }
 }

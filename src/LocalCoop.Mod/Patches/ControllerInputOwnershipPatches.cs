@@ -56,6 +56,7 @@ public static class ControllerInputOwnershipPatches
             return true;
         }
 
+        var controllerAssignment = ControllerAssignmentService.Resolve(settings.Config).ControllerDevice;
         var inputEvent = __args.FirstOrDefault();
         var typeName = __instance.GetType().FullName ?? __instance.GetType().Name;
         var methodName = __originalMethod.Name;
@@ -64,11 +65,12 @@ public static class ControllerInputOwnershipPatches
             typeName,
             methodName,
             inputEvent,
-            settings.Config.ControllerDevice,
+            controllerAssignment,
             isGeneratedSteamInput);
         if (isSelectedSteamControllerBoundary)
         {
             SteamControllerInputSelection.RegisterGeneratedUiCompanionAction(inputEvent);
+            SteamControllerInputSelection.RegisterGeneratedNativeAction(inputEvent);
             var companionDispatched = SteamControllerInputSelection.TryDispatchUiCompanionInputEvent(inputEvent);
             LogSelectedSteamControllerBoundary(
                 settings,
@@ -82,11 +84,12 @@ public static class ControllerInputOwnershipPatches
             typeName,
             methodName,
             inputEvent,
-            settings.Config.ControllerDevice,
+            controllerAssignment,
             isGeneratedSteamInput);
         if (isSelectedOriginalSteamControllerBoundary)
         {
             SteamControllerInputSelection.RegisterGeneratedOriginalSteamControllerInput(inputEvent);
+            SteamControllerInputSelection.RegisterGeneratedNativeAction(inputEvent);
             LogSelectedOriginalSteamControllerBoundary(
                 settings,
                 inputEvent,
@@ -100,15 +103,15 @@ public static class ControllerInputOwnershipPatches
         }
 
         var isSelectedControllerActive = SteamControllerInputSelection.IsSelectedControllerActive(
-            settings.Config.ControllerDevice);
+            controllerAssignment);
         if (ShouldSuppressNativeControllerInputForSelectedSteamController(
             typeName,
             methodName,
             inputEvent,
-            settings.Config.ControllerDevice,
+            controllerAssignment,
             isSelectedControllerActive))
         {
-            var nativeDuplicateResult = ControllerInputOwnership.ShouldProcess(inputEvent, settings.Config.ControllerDevice) with
+            var nativeDuplicateResult = ControllerInputOwnership.ShouldProcess(inputEvent, controllerAssignment) with
             {
                 ShouldProcess = false,
                 Reason = "selected Steam controller active; native Godot controller input suppressed"
@@ -123,42 +126,22 @@ public static class ControllerInputOwnershipPatches
             return false;
         }
 
-        if (ShouldSuppressGeneratedSteamInputForNativeControllerDeviceZero(
-            typeName,
-            methodName,
-            settings.Config.ControllerDevice,
-            isGeneratedSteamInput))
-        {
-            var duplicateResult = ControllerInputOwnership.ShouldProcess(inputEvent, settings.Config.ControllerDevice) with
-            {
-                ShouldProcess = false,
-                Reason = "native controllerDevice=0 ignores generated Steam input"
-            };
-            new BrokerEventLog(settings.EventLogPath).Write(
-                FormatControllerOwnershipLogLine(
-                    duplicateResult,
-                    inputEvent,
-                    __instance.GetType().Name,
-                    __originalMethod.Name));
-            return false;
-        }
-
         var shouldBridgeSelectedSteamInput = ShouldBridgeSelectedSteamInputAtSink(
             typeName,
             methodName,
             inputEvent,
-            settings.Config.ControllerDevice,
+            controllerAssignment,
             isGeneratedSteamInput);
         if (shouldBridgeSelectedSteamInput)
         {
             SteamControllerInputSelection.RegisterGeneratedUiCompanionAction(inputEvent);
             var bridgedResult = ControllerInputOwnership.ShouldProcess(
                 inputEvent,
-                settings.Config.ControllerDevice,
+                controllerAssignment,
                 trustAsSelectedControllerInput: true) with
             {
                 ShouldProcess = false,
-                Reason = "bridged selected Steam controller action to ui companion"
+                Reason = "bridged selected Steam controller action to generated action"
             };
             new BrokerEventLog(settings.EventLogPath).Write(
                 FormatControllerOwnershipLogLine(
@@ -171,19 +154,21 @@ public static class ControllerInputOwnershipPatches
 
         var isGeneratedUiCompanionInput = ShouldConsumeGeneratedUiCompanionAtSink(typeName, methodName)
             && SteamControllerInputSelection.TryConsumeGeneratedUiCompanionInputEvent(inputEvent);
+        var isGeneratedNativeInput = ShouldConsumeGeneratedNativeActionAtSink(typeName, methodName)
+            && SteamControllerInputSelection.TryConsumeGeneratedNativeInputEvent(inputEvent);
         var isGeneratedOriginalSteamInput = ShouldConsumeGeneratedOriginalSteamInputAtSink(typeName, methodName)
             && SteamControllerInputSelection.TryConsumeGeneratedOriginalSteamControllerInput(inputEvent);
         var isSelectedSteamInput = ShouldTrustSelectedSteamInputAtSink(
             typeName,
             methodName,
             inputEvent,
-            settings.Config.ControllerDevice,
+            controllerAssignment,
             isGeneratedSteamInput || isGeneratedOriginalSteamInput);
 
         var result = ControllerInputOwnership.ShouldProcess(
             inputEvent,
-            settings.Config.ControllerDevice,
-            isGeneratedUiCompanionInput || isSelectedSteamInput);
+            controllerAssignment,
+            isGeneratedUiCompanionInput || isGeneratedNativeInput || isSelectedSteamInput);
         if (!result.IsControllerInput)
         {
             return true;
@@ -197,8 +182,8 @@ public static class ControllerInputOwnershipPatches
                 result,
                 __instance,
                 __originalMethod,
-                isGeneratedOriginalSteamInput,
-                isGeneratedOriginalSteamInput ? "generatedOriginalSteamInput=True" : null);
+                isGeneratedOriginalSteamInput || isGeneratedNativeInput,
+                FormatGeneratedInputSuffix(isGeneratedOriginalSteamInput, isGeneratedNativeInput));
             return true;
         }
 
@@ -209,7 +194,7 @@ public static class ControllerInputOwnershipPatches
             result,
             __instance,
             __originalMethod,
-            suffix: $"generatedSteamInput={isGeneratedSteamInput} generatedOriginalSteamInput={isGeneratedOriginalSteamInput}");
+            suffix: $"generatedSteamInput={isGeneratedSteamInput} generatedOriginalSteamInput={isGeneratedOriginalSteamInput} generatedNativeInput={isGeneratedNativeInput}");
         return false;
     }
 
@@ -253,6 +238,13 @@ public static class ControllerInputOwnershipPatches
         string methodName)
     {
         return ShouldConsumeGeneratedUiCompanionAtSink(typeName, methodName);
+    }
+
+    public static bool ShouldConsumeGeneratedNativeActionAtSinkForTesting(
+        string typeName,
+        string methodName)
+    {
+        return ShouldConsumeGeneratedNativeActionAtSink(typeName, methodName);
     }
 
     public static bool ShouldTrustSelectedSteamInputAtSinkForTesting(
@@ -320,7 +312,8 @@ public static class ControllerInputOwnershipPatches
         return selectedSteamInput
             && IsAssignedSelectedSteamDevice(assignment)
             && IsControllerManagerObserver(typeName, methodName)
-            && SteamControllerInputSelection.CanMapUiCompanionAction(inputEvent);
+            && (SteamControllerInputSelection.CanMapUiCompanionAction(inputEvent)
+                || SteamControllerInputSelection.CanMapNativeGeneratedAction(inputEvent));
     }
 
     private static bool ShouldTrustSelectedOriginalSteamControllerBoundary(
@@ -354,6 +347,13 @@ public static class ControllerInputOwnershipPatches
         return IsRealInputSink(typeName, methodName);
     }
 
+    private static bool ShouldConsumeGeneratedNativeActionAtSink(
+        string typeName,
+        string methodName)
+    {
+        return IsRealInputSink(typeName, methodName);
+    }
+
     private static bool ShouldTrustSelectedSteamInputAtSink(
         string typeName,
         string methodName,
@@ -377,7 +377,8 @@ public static class ControllerInputOwnershipPatches
         return selectedSteamInput
             && IsAssignedSelectedSteamDevice(assignment)
             && IsRealInputSink(typeName, methodName)
-            && SteamControllerInputSelection.CanMapUiCompanionAction(inputEvent);
+            && (SteamControllerInputSelection.CanMapUiCompanionAction(inputEvent)
+                || SteamControllerInputSelection.CanMapNativeGeneratedAction(inputEvent));
     }
 
     private static bool ShouldSuppressGeneratedSteamInputForNativeControllerDeviceZero(
@@ -386,10 +387,7 @@ public static class ControllerInputOwnershipPatches
         BrokerControllerDeviceAssignment assignment,
         bool selectedSteamInput)
     {
-        return selectedSteamInput
-            && assignment.IsConfigured
-            && assignment.Device == 0
-            && ShouldConsumeGeneratedUiCompanionAtSink(typeName, methodName);
+        return false;
     }
 
     private static bool ShouldSuppressNativeControllerInputForSelectedSteamController(
@@ -452,7 +450,7 @@ public static class ControllerInputOwnershipPatches
     private static bool IsAssignedSelectedSteamDevice(BrokerControllerDeviceAssignment assignment)
     {
         return assignment.IsConfigured
-            && assignment.Device is > 0;
+            && assignment.Device is not null;
     }
 
     private static void LogSelectedSteamControllerBoundary(
@@ -464,7 +462,7 @@ public static class ControllerInputOwnershipPatches
     {
         var result = ControllerInputOwnership.ShouldProcess(
             inputEvent,
-            settings.Config!.ControllerDevice,
+            ControllerAssignmentService.Resolve(settings.Config!).ControllerDevice,
             trustAsSelectedControllerInput: true);
         new BrokerEventLog(settings.EventLogPath).Write(
             FormatControllerOwnershipLogLine(
@@ -483,7 +481,7 @@ public static class ControllerInputOwnershipPatches
     {
         var result = ControllerInputOwnership.ShouldProcess(
             inputEvent,
-            settings.Config!.ControllerDevice,
+            ControllerAssignmentService.Resolve(settings.Config!).ControllerDevice,
             trustAsSelectedControllerInput: true);
         new BrokerEventLog(settings.EventLogPath).Write(
             FormatControllerOwnershipLogLine(
@@ -545,6 +543,16 @@ public static class ControllerInputOwnershipPatches
         return includeUnpressed
             ? inputEvent is not null
             : IsPressedInput(inputEvent);
+    }
+
+    private static string? FormatGeneratedInputSuffix(bool isGeneratedOriginalSteamInput, bool isGeneratedNativeInput)
+    {
+        if (!isGeneratedOriginalSteamInput && !isGeneratedNativeInput)
+        {
+            return null;
+        }
+
+        return $"generatedOriginalSteamInput={isGeneratedOriginalSteamInput} generatedNativeInput={isGeneratedNativeInput}";
     }
 
     private static string FormatControllerOwnershipLogLine(

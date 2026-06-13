@@ -78,7 +78,7 @@ public sealed class LocalCoopPatchInstallerTests
     }
 
     [TestMethod]
-    public void SteamControllerInputSelectionPatchReplacesNativeUpdateOnlyWhenControllerAssignmentIsConfigured()
+    public void SteamControllerInputSelectionPatchReplacesNativeUpdateForCanonicalInputModes()
     {
         var configuredController = new BrokerModeSettings(
             Enabled: true,
@@ -94,9 +94,9 @@ public sealed class LocalCoopPatchInstallerTests
             FailureReason: null);
         var noController = configuredController with
         {
-            Config = configuredController.Config! with { ControllerDevice = BrokerControllerDeviceAssignment.None }
+            Config = configuredController.Config! with { InputMode = BrokerClientInputMode.None }
         };
-        var missingControllerConfig = configuredController with
+        var defaultAutoConfig = configuredController with
         {
             Config = configuredController.Config! with { ControllerDevice = default }
         };
@@ -106,8 +106,8 @@ public sealed class LocalCoopPatchInstallerTests
             configuredController));
         Assert.IsTrue(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches.ShouldReplaceNativeUpdateControllerConnectionsForTesting(
             noController));
-        Assert.IsFalse(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches.ShouldReplaceNativeUpdateControllerConnectionsForTesting(
-            missingControllerConfig));
+        Assert.IsTrue(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches.ShouldReplaceNativeUpdateControllerConnectionsForTesting(
+            defaultAutoConfig));
         Assert.IsFalse(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches.ShouldReplaceNativeUpdateControllerConnectionsForTesting(
             disabled));
     }

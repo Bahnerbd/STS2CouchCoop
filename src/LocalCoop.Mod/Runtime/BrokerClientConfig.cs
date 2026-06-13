@@ -6,7 +6,9 @@ public sealed record BrokerClientConfig(
     string Host,
     int Port,
     string SessionId,
-    BrokerControllerDeviceAssignment ControllerDevice = default)
+    BrokerControllerDeviceAssignment ControllerDevice = default,
+    int? PlayerSlot = null,
+    BrokerClientInputMode InputMode = BrokerClientInputMode.Auto)
 {
     public static BrokerClientConfig Parse(string content)
     {
@@ -15,16 +17,27 @@ public sealed record BrokerClientConfig(
         var clientIndex = ParseClientIndex(Require(values, "clientIndex"));
         var (host, port) = ParseEndpoint(Require(values, "endpoint"));
         var sessionId = Require(values, "sessionId");
-        var controllerDevice = values.TryGetValue("controllerDevice", out var controllerDeviceValue)
+        var legacyControllerDevice = values.TryGetValue("controllerDevice", out var controllerDeviceValue)
             ? ParseControllerDevice(controllerDeviceValue)
             : default;
+        var playerSlot = values.TryGetValue("playerSlot", out var playerSlotValue)
+            ? ParsePlayerSlot(playerSlotValue)
+            : legacyControllerDevice.Device ?? clientIndex;
+        var inputMode = values.TryGetValue("inputMode", out var inputModeValue)
+            ? ParseInputMode(inputModeValue)
+            : legacyControllerDevice is { IsConfigured: true, Device: null }
+                ? BrokerClientInputMode.None
+                : BrokerClientInputMode.Auto;
+        var controllerDevice = inputMode == BrokerClientInputMode.None
+            ? BrokerControllerDeviceAssignment.None
+            : BrokerControllerDeviceAssignment.ForDevice(playerSlot);
 
         if (string.IsNullOrWhiteSpace(sessionId))
         {
             throw new FormatException("sessionId must not be blank.");
         }
 
-        return new BrokerClientConfig(role, clientIndex, host, port, sessionId, controllerDevice);
+        return new BrokerClientConfig(role, clientIndex, host, port, sessionId, controllerDevice, playerSlot, inputMode);
     }
 
     private static Dictionary<string, string> ParseKeyValues(string content)
@@ -112,5 +125,25 @@ public sealed record BrokerClientConfig(
         }
 
         return BrokerControllerDeviceAssignment.ForDevice(device);
+    }
+
+    private static int ParsePlayerSlot(string value)
+    {
+        if (!int.TryParse(value, out var playerSlot) || playerSlot is < 0 or > 3)
+        {
+            throw new FormatException("playerSlot must be an integer from 0 through 3.");
+        }
+
+        return playerSlot;
+    }
+
+    private static BrokerClientInputMode ParseInputMode(string value)
+    {
+        return value.ToLowerInvariant() switch
+        {
+            "auto" => BrokerClientInputMode.Auto,
+            "none" => BrokerClientInputMode.None,
+            _ => throw new FormatException("inputMode must be auto or none.")
+        };
     }
 }

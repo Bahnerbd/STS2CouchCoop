@@ -14,9 +14,14 @@ public static class SteamControllerInputSelection
     private static readonly HashSet<object> GeneratedInputEvents = new(ReferenceEqualityComparer.Instance);
     private static readonly HashSet<object> AcceptedUiCompanionInputEvents = new(ReferenceEqualityComparer.Instance);
     private static readonly HashSet<object> AcceptedOriginalSteamControllerInputEvents = new(ReferenceEqualityComparer.Instance);
+    private static readonly HashSet<object> AcceptedNativeGeneratedInputEvents = new(ReferenceEqualityComparer.Instance);
     private static readonly Dictionary<string, Queue<DateTimeOffset>> PendingUiCompanionActions = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, Queue<DateTimeOffset>> PendingOriginalSteamControllerInputs = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, Queue<DateTimeOffset>> PendingNativeGeneratedActions = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, string> NativeGeneratedActionMap = CreateFallbackNativeGeneratedActionMap();
     private static readonly TimeSpan UiCompanionTokenLifetime = TimeSpan.FromMilliseconds(250);
+    private const string FallbackTopPanelSourceAction = "controller_face_button_west";
+    private const string FallbackTopPanelNativeAction = "mega_top_panel";
     private static string? _lastSelectionSummary;
     private static int? _selectedControllerDevice;
     private static int? _knownControllerDevice;
@@ -42,14 +47,14 @@ public static class SteamControllerInputSelection
                 Selected: false,
                 Index: index,
                 Handle: default,
-                Reason: $"no connected Steam controller at controllerDevice={index}");
+                Reason: $"no connected Steam controller at playerSlot={index}");
         }
 
         return new SteamControllerHandleSelection<T>(
             Selected: true,
             Index: index,
             Handle: handles[index],
-            Reason: $"selected controllerDevice={index}");
+            Reason: $"selected playerSlot={index}");
     }
 
     public static SteamControllerHandleSelection<T> ChooseControllerHandle<T>(
@@ -80,15 +85,17 @@ public static class SteamControllerInputSelection
                     Selected: true,
                     Index: index,
                     Handle: handle,
-                    Reason: $"retained previous selected Steam controller handle for controllerDevice={index}");
+                    Reason: $"retained previous selected Steam controller handle for playerSlot={index}");
             }
         }
 
-        return new SteamControllerHandleSelection<T>(
-            Selected: false,
-            Index: index,
-            Handle: default,
-            Reason: $"previous selected Steam controller handle is disconnected for controllerDevice={index}; refusing ordinal fallback");
+        var fallback = ChooseControllerHandle(handles, assignment);
+        return fallback with
+        {
+            Reason = fallback.Selected
+                ? $"previous selected Steam controller handle is disconnected; reacquired configured playerSlot={index}"
+                : $"previous selected Steam controller handle is disconnected; {fallback.Reason}"
+        };
     }
 
     public static bool IsGeneratedInputEvent(object? inputEvent)
@@ -106,7 +113,7 @@ public static class SteamControllerInputSelection
 
     public static bool IsSelectedControllerActive(BrokerControllerDeviceAssignment assignment)
     {
-        if (!assignment.IsConfigured || assignment.Device is not > 0)
+        if (!assignment.IsConfigured || assignment.Device is null)
         {
             return false;
         }
@@ -167,9 +174,14 @@ public static class SteamControllerInputSelection
         return MapSteamControllerActionToUiCompanion(GetActionName(inputEvent)) is not null;
     }
 
+    public static bool CanMapNativeGeneratedAction(object? inputEvent)
+    {
+        return MapSteamControllerActionToNativeGeneratedAction(GetActionName(inputEvent)) is not null;
+    }
+
     public static bool CanTrustOriginalSteamControllerInput(object? inputEvent)
     {
-        if (inputEvent is null || CanMapUiCompanionAction(inputEvent))
+        if (inputEvent is null || CanMapUiCompanionAction(inputEvent) || CanMapNativeGeneratedAction(inputEvent))
         {
             return false;
         }
@@ -182,6 +194,87 @@ public static class SteamControllerInputSelection
 
         var typeName = inputEvent.GetType().FullName ?? inputEvent.GetType().Name;
         return typeName.Contains("JoypadMotion", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static void RegisterGeneratedNativeAction(object? inputEvent, DateTimeOffset? now = null)
+    {
+        if (!IsPressedInput(inputEvent) || CanMapUiCompanionAction(inputEvent))
+        {
+            return;
+        }
+
+        var nativeAction = MapSteamControllerActionToNativeGeneratedAction(GetActionName(inputEvent));
+        if (nativeAction is null)
+        {
+            return;
+        }
+
+        lock (Lock)
+        {
+            if (!PendingNativeGeneratedActions.TryGetValue(nativeAction, out var pendingTokens))
+            {
+                pendingTokens = new Queue<DateTimeOffset>();
+                PendingNativeGeneratedActions[nativeAction] = pendingTokens;
+            }
+
+            pendingTokens.Enqueue(now ?? DateTimeOffset.UtcNow);
+        }
+    }
+
+    public static bool TryConsumeGeneratedNativeInputEvent(object? inputEvent, DateTimeOffset? now = null)
+    {
+        if (inputEvent is null)
+        {
+            return false;
+        }
+
+        lock (Lock)
+        {
+            if (AcceptedNativeGeneratedInputEvents.Contains(inputEvent))
+            {
+                return true;
+            }
+        }
+
+        if (!IsPressedInput(inputEvent))
+        {
+            return false;
+        }
+
+        var action = GetActionName(inputEvent);
+        if (action is null)
+        {
+            return false;
+        }
+
+        lock (Lock)
+        {
+            if (AcceptedNativeGeneratedInputEvents.Contains(inputEvent))
+            {
+                return true;
+            }
+
+            var currentTime = now ?? DateTimeOffset.UtcNow;
+            if (!PendingNativeGeneratedActions.TryGetValue(action, out var pendingTokens))
+            {
+                return false;
+            }
+
+            PruneExpiredNativeGeneratedActionTokens(action, pendingTokens, currentTime);
+            if (pendingTokens.Count == 0)
+            {
+                return false;
+            }
+
+            pendingTokens.Dequeue();
+            if (pendingTokens.Count == 0)
+            {
+                PendingNativeGeneratedActions.Remove(action);
+            }
+
+            AcceptedNativeGeneratedInputEvents.Add(inputEvent);
+            return true;
+        }
     }
 
     public static void RegisterGeneratedOriginalSteamControllerInput(object? inputEvent, DateTimeOffset? now = null)
@@ -370,8 +463,11 @@ public static class SteamControllerInputSelection
             GeneratedInputEvents.Clear();
             AcceptedUiCompanionInputEvents.Clear();
             AcceptedOriginalSteamControllerInputEvents.Clear();
+            AcceptedNativeGeneratedInputEvents.Clear();
             PendingUiCompanionActions.Clear();
             PendingOriginalSteamControllerInputs.Clear();
+            PendingNativeGeneratedActions.Clear();
+            ResetNativeGeneratedActionMap();
             _lastSelectionSummary = null;
             _selectedControllerDevice = null;
             _knownControllerDevice = null;
@@ -385,6 +481,16 @@ public static class SteamControllerInputSelection
         {
             _selectedControllerDevice = controllerDevice;
         }
+    }
+
+    public static IReadOnlyDictionary<string, string> CreateNativeGeneratedActionMapForTesting(object? controllerConfig)
+    {
+        return CreateNativeGeneratedActionMap(controllerConfig);
+    }
+
+    public static void SetNativeGeneratedActionMapForTesting(IReadOnlyDictionary<string, string> nativeGeneratedActionMap)
+    {
+        SetNativeGeneratedActionMap(nativeGeneratedActionMap);
     }
 
     public static bool IsSelectionAlreadyAppliedForTesting(
@@ -439,7 +545,7 @@ public static class SteamControllerInputSelection
                 ClearCurrentControllerHandle(strategy);
                 ClearPressedInputs(strategy);
                 LogIfChanged(
-                    $"Steam controller selection: unavailable controllerDevice={selection.Index} connected={handles.Count} reason={selection.Reason}.",
+                    $"Steam controller selection: unavailable playerSlot={selection.Index} connected={handles.Count} reason={selection.Reason}.",
                     log);
                 return;
             }
@@ -451,7 +557,8 @@ public static class SteamControllerInputSelection
             }
 
             SetCurrentControllerHandle(strategy, selection.Handle);
-            RefreshControllerConfig(strategy, selection.Handle);
+            var controllerType = RefreshControllerConfig(strategy, selection.Handle);
+            var nativeBridgeSummary = RefreshNativeGeneratedActionMap(strategy);
             RegisterGeneratedInputEventsFromStrategy(strategy);
 
             if (!Equals(previousHandle, selection.Handle))
@@ -461,7 +568,9 @@ public static class SteamControllerInputSelection
 
             SetSelectedControllerDevice(selection.Index, selection.Handle);
             LogIfChanged(
-                $"Steam controller selection: selected controllerDevice={selection.Index} handle={selection.Handle} connected={handles.Count}.",
+                "Steam controller selection: "
+                + $"selected playerSlot={selection.Index} handle={selection.Handle} connected={handles.Count} "
+                + $"inputType={controllerType ?? "<unknown>"} {nativeBridgeSummary}.",
                 log);
         }
         catch (Exception exception) when (exception is TargetInvocationException or MissingMemberException or InvalidOperationException or ArgumentException)
@@ -539,7 +648,7 @@ public static class SteamControllerInputSelection
         field.SetValue(strategy, null);
     }
 
-    private static void RefreshControllerConfig(object strategy, object handle)
+    private static object? RefreshControllerConfig(object strategy, object handle)
     {
         var steamInputType = AccessTools.TypeByName("Steamworks.SteamInput")
             ?? throw new MissingMemberException("Steamworks.SteamInput");
@@ -557,12 +666,110 @@ public static class SteamControllerInputSelection
             ?.Invoke(null, ["Controls"]);
         if (actionSet is null)
         {
-            return;
+            return controllerType;
         }
 
         strategy.GetType().GetField("_currentActionSetHandle", Members)?.SetValue(strategy, actionSet);
         steamInputType.GetMethod("ActivateActionSet", Members, [handle.GetType(), actionSet.GetType()])
             ?.Invoke(null, [handle, actionSet]);
+        return controllerType;
+    }
+
+    private static string RefreshNativeGeneratedActionMap(object strategy)
+    {
+        try
+        {
+            var controllerConfig = strategy.GetType().GetField("_controllerConfig", Members)?.GetValue(strategy);
+            var map = CreateNativeGeneratedActionMap(controllerConfig);
+            SetNativeGeneratedActionMap(map);
+            var configName = controllerConfig?.GetType().Name ?? "<none>";
+            return $"nativeBridge=config={configName} mappings={map.Count}";
+        }
+        catch (Exception exception) when (exception is TargetInvocationException or MissingMemberException or InvalidOperationException or ArgumentException)
+        {
+            ResetNativeGeneratedActionMap();
+            return $"nativeBridge=fallback reason={exception.GetType().Name}";
+        }
+    }
+
+    private static Dictionary<string, string> CreateNativeGeneratedActionMap(object? controllerConfig)
+    {
+        var nativeGeneratedActionMap = CreateFallbackNativeGeneratedActionMap();
+        if (controllerConfig is null)
+        {
+            return nativeGeneratedActionMap;
+        }
+
+        var steamInputControllerMap = ReadStringDictionaryProperty(controllerConfig, "SteamInputControllerMap");
+        var defaultControllerInputMap = ReadStringDictionaryProperty(controllerConfig, "DefaultControllerInputMap");
+        if (steamInputControllerMap.Count == 0 || defaultControllerInputMap.Count == 0)
+        {
+            return nativeGeneratedActionMap;
+        }
+
+        var steamVirtualButtons = new HashSet<string>(steamInputControllerMap.Values, StringComparer.Ordinal);
+        foreach (var (nativeAction, virtualButton) in defaultControllerInputMap)
+        {
+            if (steamVirtualButtons.Contains(virtualButton))
+            {
+                nativeGeneratedActionMap[virtualButton] = nativeAction;
+            }
+        }
+
+        return nativeGeneratedActionMap;
+    }
+
+    private static Dictionary<string, string> ReadStringDictionaryProperty(object source, string propertyName)
+    {
+        var dictionary = new Dictionary<string, string>(StringComparer.Ordinal);
+        if (source.GetType().GetProperty(propertyName, Members)?.GetValue(source) is not IDictionary sourceDictionary)
+        {
+            return dictionary;
+        }
+
+        foreach (DictionaryEntry entry in sourceDictionary)
+        {
+            var key = entry.Key?.ToString();
+            var value = entry.Value?.ToString();
+            if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(value))
+            {
+                dictionary[key] = value;
+            }
+        }
+
+        return dictionary;
+    }
+
+    private static void SetNativeGeneratedActionMap(IReadOnlyDictionary<string, string> nativeGeneratedActionMap)
+    {
+        lock (Lock)
+        {
+            NativeGeneratedActionMap.Clear();
+            foreach (var (sourceAction, nativeAction) in nativeGeneratedActionMap)
+            {
+                NativeGeneratedActionMap[sourceAction] = nativeAction;
+            }
+        }
+    }
+
+    private static void ResetNativeGeneratedActionMap()
+    {
+        lock (Lock)
+        {
+            NativeGeneratedActionMap.Clear();
+            foreach (var (sourceAction, nativeAction) in CreateFallbackNativeGeneratedActionMap())
+            {
+                NativeGeneratedActionMap[sourceAction] = nativeAction;
+            }
+        }
+    }
+
+    private static Dictionary<string, string> CreateFallbackNativeGeneratedActionMap()
+    {
+        return new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            [FallbackTopPanelSourceAction] = FallbackTopPanelNativeAction
+        };
     }
 
     private static void RegisterGeneratedInputEventsFromStrategy(object strategy)
@@ -597,8 +804,10 @@ public static class SteamControllerInputSelection
             GeneratedInputEvents.Clear();
             AcceptedUiCompanionInputEvents.Clear();
             AcceptedOriginalSteamControllerInputEvents.Clear();
+            AcceptedNativeGeneratedInputEvents.Clear();
             PendingUiCompanionActions.Clear();
             PendingOriginalSteamControllerInputs.Clear();
+            PendingNativeGeneratedActions.Clear();
         }
     }
 
@@ -674,6 +883,22 @@ public static class SteamControllerInputSelection
         if (pendingTokens.Count == 0)
         {
             PendingOriginalSteamControllerInputs.Remove(key);
+        }
+    }
+
+    private static void PruneExpiredNativeGeneratedActionTokens(
+        string action,
+        Queue<DateTimeOffset> pendingTokens,
+        DateTimeOffset now)
+    {
+        while (pendingTokens.Count > 0 && now - pendingTokens.Peek() > UiCompanionTokenLifetime)
+        {
+            pendingTokens.Dequeue();
+        }
+
+        if (pendingTokens.Count == 0)
+        {
+            PendingNativeGeneratedActions.Remove(action);
         }
     }
 
@@ -839,6 +1064,21 @@ public static class SteamControllerInputSelection
             "controller_face_button_east" => "ui_cancel",
             _ => null
         };
+    }
+
+    private static string? MapSteamControllerActionToNativeGeneratedAction(string? action)
+    {
+        if (action is null)
+        {
+            return null;
+        }
+
+        lock (Lock)
+        {
+            return NativeGeneratedActionMap.TryGetValue(action, out var nativeAction)
+                ? nativeAction
+                : null;
+        }
     }
 
     private static void LogIfChanged(string message, Action<string> log)

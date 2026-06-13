@@ -70,6 +70,7 @@ try {
     Set-Content -LiteralPath (Join-Path $packageRoot 'LocalCoop.dll') -Value 'mod'
     Set-Content -LiteralPath (Join-Path $packageRoot 'LocalCoop.Protocol.dll') -Value 'protocol'
     Set-Content -LiteralPath (Join-Path $packageRoot 'broker\LocalCoop.Broker.Cli.exe') -Value 'broker'
+    Set-Content -LiteralPath (Join-Path $packageRoot 'Start-LocalCoop4Players.bat') -Value 'launcher'
     Set-Content -LiteralPath (Join-Path $packageRoot 'Start-LocalCoopClients.ps1') -Value 'launcher'
     Set-Content -LiteralPath (Join-Path $packageRoot 'Start-LocalCoopTwoClient.ps1') -Value 'launcher'
 
