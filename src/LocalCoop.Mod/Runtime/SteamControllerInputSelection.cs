@@ -1,6 +1,8 @@
 using System.Collections;
 using System.Reflection;
 using System.Runtime.CompilerServices;
+using System.Security.Cryptography;
+using System.Text;
 using HarmonyLib;
 
 namespace LocalCoop.Mod.Runtime;
@@ -26,10 +28,20 @@ public static class SteamControllerInputSelection
     private static int? _selectedControllerDevice;
     private static int? _knownControllerDevice;
     private static object? _knownControllerHandle;
+    private static string? _selectedControllerClaimKey;
+    private static FileStream? _selectedControllerClaimStream;
 
     public static SteamControllerHandleSelection<T> ChooseControllerHandle<T>(
         IReadOnlyList<T> handles,
         BrokerControllerDeviceAssignment assignment)
+    {
+        return ChooseConfiguredControllerHandle(handles, assignment, unavailableControllerHandles: null);
+    }
+
+    private static SteamControllerHandleSelection<T> ChooseConfiguredControllerHandle<T>(
+        IReadOnlyList<T> handles,
+        BrokerControllerDeviceAssignment assignment,
+        IReadOnlySet<T>? unavailableControllerHandles)
     {
         if (!assignment.IsConfigured || assignment.Device is null)
         {
@@ -50,17 +62,29 @@ public static class SteamControllerInputSelection
                 Reason: $"no connected Steam controller at playerSlot={index}");
         }
 
+        var handle = handles[index];
+        if (unavailableControllerHandles?.Contains(handle) is true)
+        {
+            return new SteamControllerHandleSelection<T>(
+                Selected: false,
+                Index: index,
+                Handle: default,
+                Reason: $"configured playerSlot={index} controller is already claimed");
+        }
+
         return new SteamControllerHandleSelection<T>(
             Selected: true,
             Index: index,
-            Handle: handles[index],
+            Handle: handle,
             Reason: $"selected playerSlot={index}");
     }
 
     public static SteamControllerHandleSelection<T> ChooseControllerHandle<T>(
         IReadOnlyList<T> handles,
         BrokerControllerDeviceAssignment assignment,
-        T? knownControllerHandle)
+        T? knownControllerHandle,
+        int? controllerClientCount = null,
+        IReadOnlySet<T>? unavailableControllerHandles = null)
     {
         if (!assignment.IsConfigured || assignment.Device is null)
         {
@@ -74,12 +98,13 @@ public static class SteamControllerInputSelection
         var index = assignment.Device.Value;
         if (knownControllerHandle is null)
         {
-            return ChooseControllerHandle(handles, assignment);
+            return ChooseConfiguredControllerHandle(handles, assignment, unavailableControllerHandles);
         }
 
         foreach (var handle in handles)
         {
-            if (EqualityComparer<T>.Default.Equals(handle, knownControllerHandle))
+            if (EqualityComparer<T>.Default.Equals(handle, knownControllerHandle)
+                && unavailableControllerHandles?.Contains(handle) is not true)
             {
                 return new SteamControllerHandleSelection<T>(
                     Selected: true,
@@ -89,13 +114,48 @@ public static class SteamControllerInputSelection
             }
         }
 
-        var fallback = ChooseControllerHandle(handles, assignment);
-        return fallback with
+        if (controllerClientCount is not > 0)
         {
-            Reason = fallback.Selected
-                ? $"previous selected Steam controller handle is disconnected; reacquired configured playerSlot={index}"
-                : $"previous selected Steam controller handle is disconnected; {fallback.Reason}"
-        };
+            var fallback = ChooseConfiguredControllerHandle(handles, assignment, unavailableControllerHandles);
+            return fallback with
+            {
+                Reason = fallback.Selected
+                    ? $"previous selected Steam controller handle is disconnected; reacquired configured playerSlot={index}"
+                    : $"previous selected Steam controller handle is disconnected; {fallback.Reason}"
+            };
+        }
+
+        var requiredControllers = controllerClientCount.Value;
+        if (handles.Count <= requiredControllers)
+        {
+            return new SteamControllerHandleSelection<T>(
+                Selected: false,
+                Index: index,
+                Handle: default,
+                Reason: $"previous selected Steam controller handle is disconnected; no spare controller connected count={handles.Count} controllerClients={requiredControllers}");
+        }
+
+        for (var spareIndex = requiredControllers; spareIndex < handles.Count; spareIndex++)
+        {
+            var spareHandle = handles[spareIndex];
+            if (unavailableControllerHandles?.Contains(spareHandle) is true)
+            {
+                continue;
+            }
+
+            return new SteamControllerHandleSelection<T>(
+                Selected: true,
+                Index: index,
+                Handle: spareHandle,
+                Reason: $"previous selected Steam controller handle is disconnected; assigned spare controller handleIndex={spareIndex} controllerClients={requiredControllers}",
+                RememberHandle: false);
+        }
+
+        return new SteamControllerHandleSelection<T>(
+            Selected: false,
+            Index: index,
+            Handle: default,
+            Reason: $"previous selected Steam controller handle is disconnected; spare controller already claimed connected count={handles.Count} controllerClients={requiredControllers}");
     }
 
     public static bool IsGeneratedInputEvent(object? inputEvent)
@@ -570,6 +630,9 @@ public static class SteamControllerInputSelection
     public static void ApplySelection(
         object strategy,
         BrokerControllerDeviceAssignment assignment,
+        int? controllerClientCount,
+        string claimScope,
+        int clientIndex,
         Action<string> log)
     {
         if (!assignment.IsConfigured)
@@ -590,7 +653,31 @@ public static class SteamControllerInputSelection
             }
 
             var handles = GetConnectedControllerHandles(strategy);
-            var selection = ChooseControllerHandle(handles, assignment, GetKnownControllerHandle(assignment));
+            var knownHandle = GetKnownControllerHandle(assignment);
+            var unavailableHandles = new HashSet<object>(ReferenceEqualityComparer.Instance);
+            SteamControllerHandleSelection<object> selection;
+            string? failedClaimReason = null;
+            while (true)
+            {
+                selection = ChooseControllerHandle(
+                    handles,
+                    assignment,
+                    knownHandle,
+                    controllerClientCount,
+                    unavailableHandles);
+                if (!selection.Selected || selection.Handle is null)
+                {
+                    break;
+                }
+
+                if (TryClaimControllerHandle(claimScope, clientIndex, selection.Handle, out failedClaimReason))
+                {
+                    break;
+                }
+
+                unavailableHandles.Add(selection.Handle);
+            }
+
             if (!selection.Selected || selection.Handle is null)
             {
                 ClearGeneratedInputEvents();
@@ -598,7 +685,9 @@ public static class SteamControllerInputSelection
                 ClearCurrentControllerHandle(strategy);
                 ClearPressedInputs(strategy);
                 LogIfChanged(
-                    $"Steam controller selection: unavailable playerSlot={selection.Index} connected={handles.Count} reason={selection.Reason}.",
+                    $"Steam controller selection: unavailable playerSlot={selection.Index} connected={handles.Count} "
+                    + $"controllerClients={controllerClientCount?.ToString() ?? "<unknown>"} reason={selection.Reason}"
+                    + $"{(failedClaimReason is null ? string.Empty : $" claim={failedClaimReason}")}.",
                     log);
                 return;
             }
@@ -619,10 +708,12 @@ public static class SteamControllerInputSelection
                 ClearPressedInputs(strategy);
             }
 
-            SetSelectedControllerDevice(selection.Index, selection.Handle);
+            SetSelectedControllerDevice(selection.Index, selection.Handle, selection.RememberHandle);
             LogIfChanged(
                 "Steam controller selection: "
                 + $"selected playerSlot={selection.Index} handle={selection.Handle} connected={handles.Count} "
+                + $"controllerClients={controllerClientCount?.ToString() ?? "<unknown>"} "
+                + $"claim=held "
                 + $"inputType={controllerType ?? "<unknown>"} {nativeBridgeSummary}.",
                 log);
         }
@@ -879,13 +970,16 @@ public static class SteamControllerInputSelection
         }
     }
 
-    private static void SetSelectedControllerDevice(int controllerDevice, object handle)
+    private static void SetSelectedControllerDevice(int controllerDevice, object handle, bool rememberHandle = true)
     {
         lock (Lock)
         {
             _selectedControllerDevice = controllerDevice;
-            _knownControllerDevice = controllerDevice;
-            _knownControllerHandle = handle;
+            if (rememberHandle)
+            {
+                _knownControllerDevice = controllerDevice;
+                _knownControllerHandle = handle;
+            }
         }
     }
 
@@ -894,6 +988,7 @@ public static class SteamControllerInputSelection
         lock (Lock)
         {
             _selectedControllerDevice = null;
+            ReleaseSelectedControllerClaimLocked();
         }
     }
 
@@ -904,7 +999,75 @@ public static class SteamControllerInputSelection
             _selectedControllerDevice = null;
             _knownControllerDevice = null;
             _knownControllerHandle = null;
+            ReleaseSelectedControllerClaimLocked();
         }
+    }
+
+    private static bool TryClaimControllerHandle(
+        string claimScope,
+        int clientIndex,
+        object handle,
+        out string failureReason)
+    {
+        failureReason = "<none>";
+
+        var claimKey = BuildControllerClaimKey(claimScope, handle);
+        lock (Lock)
+        {
+            if (string.Equals(_selectedControllerClaimKey, claimKey, StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        try
+        {
+            var claimDirectory = Path.Combine(Path.GetTempPath(), "LocalCoopControllerClaims");
+            Directory.CreateDirectory(claimDirectory);
+            var claimPath = Path.Combine(claimDirectory, $"{HashControllerClaimKey(claimKey)}.claim");
+            var stream = new FileStream(
+                claimPath,
+                FileMode.OpenOrCreate,
+                FileAccess.ReadWrite,
+                FileShare.None,
+                bufferSize: 1,
+                FileOptions.DeleteOnClose);
+            var claimText = Encoding.UTF8.GetBytes($"scope={claimScope}{Environment.NewLine}clientIndex={clientIndex}{Environment.NewLine}handle={handle}{Environment.NewLine}");
+            stream.SetLength(0);
+            stream.Write(claimText, 0, claimText.Length);
+            stream.Flush();
+
+            lock (Lock)
+            {
+                ReleaseSelectedControllerClaimLocked();
+                _selectedControllerClaimKey = claimKey;
+                _selectedControllerClaimStream = stream;
+            }
+
+            return true;
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        {
+            failureReason = $"already-claimed handle={handle} reason={exception.GetType().Name}";
+            return false;
+        }
+    }
+
+    private static string BuildControllerClaimKey(string claimScope, object handle)
+    {
+        return $"{claimScope}|{handle.GetType().FullName}|{handle}";
+    }
+
+    private static string HashControllerClaimKey(string claimKey)
+    {
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(claimKey)));
+    }
+
+    private static void ReleaseSelectedControllerClaimLocked()
+    {
+        _selectedControllerClaimKey = null;
+        _selectedControllerClaimStream?.Dispose();
+        _selectedControllerClaimStream = null;
     }
 
     private static void PruneExpiredUiCompanionTokens(
@@ -1154,4 +1317,5 @@ public sealed record SteamControllerHandleSelection<T>(
     bool Selected,
     int Index,
     T? Handle,
-    string Reason);
+    string Reason,
+    bool RememberHandle = true);

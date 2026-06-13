@@ -16,12 +16,14 @@ public sealed class ControllerAssignmentServiceTests
             Port: 38989,
             SessionId: "local-test",
             PlayerSlot: 2,
-            InputMode: BrokerClientInputMode.Auto));
+            InputMode: BrokerClientInputMode.Auto,
+            ControllerClientCount: 3));
 
         Assert.AreEqual(2, assignment.PlayerSlot);
         Assert.AreEqual(BrokerClientInputMode.Auto, assignment.InputMode);
         Assert.IsTrue(assignment.ControllerDevice.IsConfigured);
         Assert.AreEqual(2, assignment.ControllerDevice.Device);
+        Assert.AreEqual(3, assignment.ControllerClientCount);
     }
 
     [TestMethod]

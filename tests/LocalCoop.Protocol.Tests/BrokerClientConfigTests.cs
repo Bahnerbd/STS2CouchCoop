@@ -87,14 +87,32 @@ public sealed class BrokerClientConfigTests
             clientIndex=2
             playerSlot=3
             inputMode=auto
+            controllerClientCount=3
             endpoint=127.0.0.1:38989
             sessionId=local-test
             """);
 
         Assert.AreEqual(3, config.PlayerSlot);
         Assert.AreEqual(BrokerClientInputMode.Auto, config.InputMode);
+        Assert.AreEqual(3, config.ControllerClientCount);
         Assert.IsTrue(config.ControllerDevice.IsConfigured);
         Assert.AreEqual(3, config.ControllerDevice.Device);
+    }
+
+    [TestMethod]
+    public void RejectsControllerClientCountOutsideFourLocalClients()
+    {
+        var exception = Assert.ThrowsException<FormatException>(() => BrokerClientConfig.Parse("""
+            role=client
+            clientIndex=2
+            playerSlot=2
+            inputMode=auto
+            controllerClientCount=5
+            endpoint=127.0.0.1:38989
+            sessionId=local-test
+            """));
+
+        StringAssert.Contains(exception.Message, "controllerClientCount");
     }
 
     [TestMethod]

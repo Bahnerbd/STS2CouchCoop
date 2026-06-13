@@ -53,7 +53,7 @@ public sealed class SteamControllerInputSelectionTests
     }
 
     [TestMethod]
-    public void FallsBackToConfiguredSlotWhenKnownControllerHandleIsMissing()
+    public void LegacyConfigsFallBackToConfiguredSlotWhenKnownControllerHandleIsMissing()
     {
         var selection = SteamControllerInputSelection.ChooseControllerHandle(
             ["first", "third", "fourth"],
@@ -64,6 +64,105 @@ public sealed class SteamControllerInputSelectionTests
         Assert.AreEqual(2, selection.Index);
         Assert.AreEqual("fourth", selection.Handle);
         StringAssert.Contains(selection.Reason, "reacquired configured playerSlot=2");
+    }
+
+    [TestMethod]
+    public void DisconnectWithoutSpareLeavesControllerInactive()
+    {
+        var selection = SteamControllerInputSelection.ChooseControllerHandle(
+            ["first", "other"],
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            "second",
+            controllerClientCount: 2);
+
+        Assert.IsFalse(selection.Selected);
+        Assert.AreEqual(1, selection.Index);
+        StringAssert.Contains(selection.Reason, "no spare controller");
+    }
+
+    [TestMethod]
+    public void DisconnectWithSpareAssignsSpareController()
+    {
+        var selection = SteamControllerInputSelection.ChooseControllerHandle(
+            ["first", "other", "extra"],
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            "second",
+            controllerClientCount: 2);
+
+        Assert.IsTrue(selection.Selected);
+        Assert.AreEqual(1, selection.Index);
+        Assert.AreEqual("extra", selection.Handle);
+        Assert.IsFalse(selection.RememberHandle);
+        StringAssert.Contains(selection.Reason, "assigned spare controller");
+    }
+
+    [TestMethod]
+    public void DisconnectSkipsAlreadyClaimedSpareController()
+    {
+        var selection = SteamControllerInputSelection.ChooseControllerHandle(
+            ["first", "other", "claimed-extra", "free-extra"],
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            "second",
+            controllerClientCount: 2,
+            unavailableControllerHandles: new HashSet<string>(StringComparer.Ordinal)
+            {
+                "claimed-extra"
+            });
+
+        Assert.IsTrue(selection.Selected);
+        Assert.AreEqual(1, selection.Index);
+        Assert.AreEqual("free-extra", selection.Handle);
+        Assert.IsFalse(selection.RememberHandle);
+        StringAssert.Contains(selection.Reason, "handleIndex=3");
+    }
+
+    [TestMethod]
+    public void DisconnectStaysInactiveWhenAllSparesAreAlreadyClaimed()
+    {
+        var selection = SteamControllerInputSelection.ChooseControllerHandle(
+            ["first", "other", "claimed-extra"],
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            "second",
+            controllerClientCount: 2,
+            unavailableControllerHandles: new HashSet<string>(StringComparer.Ordinal)
+            {
+                "claimed-extra"
+            });
+
+        Assert.IsFalse(selection.Selected);
+        Assert.AreEqual(1, selection.Index);
+        StringAssert.Contains(selection.Reason, "spare controller already claimed");
+    }
+
+    [TestMethod]
+    public void DisconnectWithMultipleSparesPrefersHandleBeyondControllerClients()
+    {
+        var selection = SteamControllerInputSelection.ChooseControllerHandle(
+            ["first", "extra-a", "extra-b"],
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            "second",
+            controllerClientCount: 2);
+
+        Assert.IsTrue(selection.Selected);
+        Assert.AreEqual(1, selection.Index);
+        Assert.AreEqual("extra-b", selection.Handle);
+        StringAssert.Contains(selection.Reason, "handleIndex=2");
+    }
+
+    [TestMethod]
+    public void ReconnectedKnownControllerReclaimsOriginalClient()
+    {
+        var selection = SteamControllerInputSelection.ChooseControllerHandle(
+            ["first", "extra", "second"],
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            "second",
+            controllerClientCount: 2);
+
+        Assert.IsTrue(selection.Selected);
+        Assert.AreEqual(1, selection.Index);
+        Assert.AreEqual("second", selection.Handle);
+        Assert.IsTrue(selection.RememberHandle);
+        StringAssert.Contains(selection.Reason, "retained previous selected Steam controller handle");
     }
 
     [TestMethod]

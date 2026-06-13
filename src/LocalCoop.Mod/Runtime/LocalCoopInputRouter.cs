@@ -19,7 +19,9 @@ public static class LocalCoopInputRouter
             assignment.InputMode == BrokerClientInputMode.None
                 ? "inputMode=none"
                 : "SteamInput primary; native fallback if unavailable",
-            assignment.ControllerDevice);
+            assignment.ControllerDevice,
+            assignment.ControllerClientCount,
+            config.SessionId);
     }
 
     public static void ApplyControllerSelection(
@@ -30,6 +32,9 @@ public static class LocalCoopInputRouter
         SteamControllerInputSelection.ApplySelection(
             strategy,
             assignment.ControllerDevice,
+            assignment.ControllerClientCount,
+            assignment.SessionId,
+            assignment.ClientIndex,
             message => log(FormatRuntimeAssignmentLog(assignment, message)));
     }
 
@@ -163,6 +168,7 @@ public static class LocalCoopInputRouter
             + $"clientIndex={assignment.ClientIndex} "
             + $"playerSlot={assignment.PlayerSlot} "
             + $"inputMode={assignment.InputMode.ToString().ToLowerInvariant()} "
+            + $"controllerClientCount={assignment.ControllerClientCount?.ToString() ?? "<unknown>"} "
             + $"source={assignment.SelectedSource} "
             + $"fallback=\"{assignment.FallbackReason}\" "
             + message;
@@ -214,7 +220,9 @@ public sealed record ClientControllerAssignment(
     ControllerInputSource SelectedSource,
     ControllerIdentity? Identity,
     string FallbackReason,
-    BrokerControllerDeviceAssignment ControllerDevice);
+    BrokerControllerDeviceAssignment ControllerDevice,
+    int? ControllerClientCount,
+    string SessionId);
 
 public enum ControllerInputSource
 {

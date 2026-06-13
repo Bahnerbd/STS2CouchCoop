@@ -8,7 +8,8 @@ public sealed record BrokerClientConfig(
     string SessionId,
     BrokerControllerDeviceAssignment ControllerDevice = default,
     int? PlayerSlot = null,
-    BrokerClientInputMode InputMode = BrokerClientInputMode.Auto)
+    BrokerClientInputMode InputMode = BrokerClientInputMode.Auto,
+    int? ControllerClientCount = null)
 {
     public static BrokerClientConfig Parse(string content)
     {
@@ -28,6 +29,9 @@ public sealed record BrokerClientConfig(
             : legacyControllerDevice is { IsConfigured: true, Device: null }
                 ? BrokerClientInputMode.None
                 : BrokerClientInputMode.Auto;
+        var controllerClientCount = values.TryGetValue("controllerClientCount", out var controllerClientCountValue)
+            ? ParseControllerClientCount(controllerClientCountValue)
+            : (int?)null;
         var controllerDevice = inputMode == BrokerClientInputMode.None
             ? BrokerControllerDeviceAssignment.None
             : BrokerControllerDeviceAssignment.ForDevice(playerSlot);
@@ -37,7 +41,16 @@ public sealed record BrokerClientConfig(
             throw new FormatException("sessionId must not be blank.");
         }
 
-        return new BrokerClientConfig(role, clientIndex, host, port, sessionId, controllerDevice, playerSlot, inputMode);
+        return new BrokerClientConfig(
+            role,
+            clientIndex,
+            host,
+            port,
+            sessionId,
+            controllerDevice,
+            playerSlot,
+            inputMode,
+            controllerClientCount);
     }
 
     private static Dictionary<string, string> ParseKeyValues(string content)
@@ -145,5 +158,15 @@ public sealed record BrokerClientConfig(
             "none" => BrokerClientInputMode.None,
             _ => throw new FormatException("inputMode must be auto or none.")
         };
+    }
+
+    private static int ParseControllerClientCount(string value)
+    {
+        if (!int.TryParse(value, out var controllerClientCount) || controllerClientCount is < 0 or > 4)
+        {
+            throw new FormatException("controllerClientCount must be an integer from 0 through 4.");
+        }
+
+        return controllerClientCount;
     }
 }

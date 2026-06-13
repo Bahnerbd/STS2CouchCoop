@@ -9,11 +9,12 @@ public static class ControllerAssignmentService
             ? BrokerControllerDeviceAssignment.None
             : BrokerControllerDeviceAssignment.ForDevice(playerSlot);
 
-        return new ControllerAssignment(playerSlot, config.InputMode, controllerDevice);
+        return new ControllerAssignment(playerSlot, config.InputMode, controllerDevice, config.ControllerClientCount);
     }
 }
 
 public sealed record ControllerAssignment(
     int PlayerSlot,
     BrokerClientInputMode InputMode,
-    BrokerControllerDeviceAssignment ControllerDevice);
+    BrokerControllerDeviceAssignment ControllerDevice,
+    int? ControllerClientCount);

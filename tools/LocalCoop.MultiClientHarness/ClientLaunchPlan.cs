@@ -46,6 +46,12 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
             throw new ArgumentException("Controller device override count must match client count.", nameof(controllerDevices));
         }
 
+        var resolvedControllerDevices = controllerDevices
+            ?? Enumerable.Range(0, clientCount)
+                .Select(BrokerControllerDeviceAssignment.ForDevice)
+                .ToArray();
+        var controllerClientCount = resolvedControllerDevices.Count(controllerDevice => controllerDevice.Device is not null);
+
         return new ClientLaunchPlan(
             Enumerable.Range(0, clientCount)
                 .Select(index => new ClientLaunchPlanEntry(
@@ -53,7 +59,8 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
                     ConfigContent: FormatConfig(
                         role: index == 0 ? "host" : "client",
                         clientIndex: index,
-                        controllerDevice: controllerDevices?[index] ?? BrokerControllerDeviceAssignment.ForDevice(index),
+                        controllerDevice: resolvedControllerDevices[index],
+                        controllerClientCount,
                         brokerHost,
                         brokerPort,
                         sessionId)))
@@ -64,6 +71,7 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
         string role,
         int clientIndex,
         BrokerControllerDeviceAssignment controllerDevice,
+        int controllerClientCount,
         string brokerHost,
         int brokerPort,
         string sessionId)
@@ -74,6 +82,7 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
             $"clientIndex={clientIndex}",
             $"playerSlot={FormatPlayerSlot(clientIndex, controllerDevice)}",
             $"inputMode={FormatInputMode(controllerDevice)}",
+            $"controllerClientCount={controllerClientCount}",
             $"controllerDevice={FormatControllerDevice(controllerDevice)}",
             $"endpoint={brokerHost}:{brokerPort}",
             $"sessionId={sessionId}",

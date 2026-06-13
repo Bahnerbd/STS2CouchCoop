@@ -1369,6 +1369,8 @@ function Format-LocalCoopClientBrokerConfig {
         [Parameter(Mandatory = $true)]
         [string]$ControllerDevice,
         [Parameter(Mandatory = $true)]
+        [int]$ControllerClientCount,
+        [Parameter(Mandatory = $true)]
         [string]$SessionId,
         [Parameter(Mandatory = $true)]
         [string]$HostName,
@@ -1407,6 +1409,7 @@ function Format-LocalCoopClientBrokerConfig {
         "clientIndex=$ClientIndex"
         "playerSlot=$playerSlot"
         "inputMode=$inputMode"
+        "controllerClientCount=$ControllerClientCount"
         "controllerDevice=$ControllerDevice"
         "endpoint=$($HostName):$Port"
         "sessionId=$SessionId"
@@ -1432,6 +1435,7 @@ function Write-LocalCoopClientBrokerConfigs {
 
     Assert-LocalCoopClientCount -ClientCount $ClientCount
     $resolvedDevices = @(ConvertFrom-LocalCoopControllerDeviceList -ControllerDevices $ControllerDevices -ClientCount $ClientCount)
+    $controllerClientCount = @($resolvedDevices | Where-Object { -not [string]::Equals($_, 'none', [StringComparison]::OrdinalIgnoreCase) }).Count
 
     for ($clientIndex = 0; $clientIndex -lt $ClientCount; $clientIndex++) {
         $clientDirectory = Join-Path $ConfigRoot ("client-{0}" -f $clientIndex)
@@ -1439,6 +1443,7 @@ function Write-LocalCoopClientBrokerConfigs {
         $content = Format-LocalCoopClientBrokerConfig `
             -ClientIndex $clientIndex `
             -ControllerDevice $resolvedDevices[$clientIndex] `
+            -ControllerClientCount $controllerClientCount `
             -SessionId $SessionId `
             -HostName $HostName `
             -Port $Port
