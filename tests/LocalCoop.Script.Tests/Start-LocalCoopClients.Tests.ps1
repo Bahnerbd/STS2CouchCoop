@@ -9,8 +9,8 @@ if (-not (Test-Path -LiteralPath $scriptPath)) {
 }
 
 $scriptContent = Get-Content -Raw -LiteralPath $scriptPath
-if ($scriptContent -notmatch '\[int\]\$WindowPlacementStabilizationSeconds\s*=\s*0') {
-    throw 'Start-LocalCoopClients.ps1 should default post-launch window placement stabilization to one immediate pass.'
+if ($scriptContent -notmatch '\[int\]\$WindowPlacementStabilizationSeconds\s*=\s*15') {
+    throw 'Start-LocalCoopClients.ps1 should keep placing windows during the game startup resize window by default.'
 }
 
 . $scriptPath

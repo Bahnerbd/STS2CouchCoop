@@ -10,7 +10,7 @@ param(
     [int]$DefaultPort = 38989,
     [int]$BrokerStartupTimeoutSeconds = 60,
     [int]$WindowPlacementTimeoutSeconds = 30,
-    [int]$WindowPlacementStabilizationSeconds = 0,
+    [int]$WindowPlacementStabilizationSeconds = 15,
     [int]$WindowPlacementRetryIntervalMilliseconds = 1000,
     [switch]$ReuseExistingBroker,
     [switch]$SkipClientLaunch,
