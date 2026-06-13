@@ -26,6 +26,9 @@ public sealed class ClientLaunchPlanTests
         Assert.IsTrue(parsed.All(config => config.ControllerDevice.IsConfigured));
         Assert.IsTrue(parsed.All(config => config.SessionId == "local-test"));
         Assert.IsTrue(parsed.All(config => config.Port == 38989));
+        StringAssert.Contains(plan.Clients[0].ConfigContent, "playerSlot=0");
+        StringAssert.Contains(plan.Clients[0].ConfigContent, "inputMode=auto");
+        StringAssert.Contains(plan.Clients[0].ConfigContent, "controllerDevice=0");
     }
 
     [TestMethod]
@@ -44,6 +47,7 @@ public sealed class ClientLaunchPlanTests
         Assert.AreEqual(BrokerClientRole.Client, parsed[1].Role);
         CollectionAssert.AreEqual(new[] { 0, 1 }, parsed.Select(config => config.ClientIndex).ToArray());
         CollectionAssert.AreEqual(new int?[] { 0, 1 }, parsed.Select(config => config.ControllerDevice.Device).ToArray());
+        StringAssert.Contains(plan.Clients[1].ConfigContent, "controllerDevice=1");
     }
 
     [TestMethod]
@@ -72,6 +76,11 @@ public sealed class ClientLaunchPlanTests
         CollectionAssert.AreEqual(new[] { 0, 1, 2 }, parsed.Select(config => config.ClientIndex).ToArray());
         CollectionAssert.AreEqual(new int?[] { 2, null, 0 }, parsed.Select(config => config.ControllerDevice.Device).ToArray());
         Assert.IsTrue(parsed.All(config => config.ControllerDevice.IsConfigured));
+        StringAssert.Contains(plan.Clients[0].ConfigContent, "playerSlot=2");
+        StringAssert.Contains(plan.Clients[0].ConfigContent, "controllerDevice=2");
+        StringAssert.Contains(plan.Clients[1].ConfigContent, "playerSlot=1");
+        StringAssert.Contains(plan.Clients[1].ConfigContent, "inputMode=none");
+        StringAssert.Contains(plan.Clients[1].ConfigContent, "controllerDevice=none");
     }
 
     [TestMethod]

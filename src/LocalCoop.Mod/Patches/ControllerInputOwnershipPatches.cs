@@ -56,7 +56,8 @@ public static class ControllerInputOwnershipPatches
             return true;
         }
 
-        var controllerAssignment = ControllerAssignmentService.Resolve(settings.Config).ControllerDevice;
+        var clientAssignment = LocalCoopInputRouter.ResolveAssignment(settings.Config);
+        var controllerAssignment = clientAssignment.ControllerDevice;
         var inputEvent = __args.FirstOrDefault();
         var typeName = __instance.GetType().FullName ?? __instance.GetType().Name;
         var methodName = __originalMethod.Name;
@@ -69,13 +70,11 @@ public static class ControllerInputOwnershipPatches
             isGeneratedSteamInput);
         if (isSelectedSteamControllerBoundary)
         {
-            SteamControllerInputSelection.RegisterGeneratedUiCompanionAction(inputEvent);
-            SteamControllerInputSelection.RegisterGeneratedNativeAction(inputEvent);
-            var companionDispatched = SteamControllerInputSelection.TryDispatchUiCompanionInputEvent(inputEvent);
+            var observation = LocalCoopInputRouter.ObserveSelectedSteamSource(inputEvent);
             LogSelectedSteamControllerBoundary(
                 settings,
                 inputEvent,
-                companionDispatched,
+                observation,
                 __instance,
                 __originalMethod);
         }
@@ -88,8 +87,7 @@ public static class ControllerInputOwnershipPatches
             isGeneratedSteamInput);
         if (isSelectedOriginalSteamControllerBoundary)
         {
-            SteamControllerInputSelection.RegisterGeneratedOriginalSteamControllerInput(inputEvent);
-            SteamControllerInputSelection.RegisterGeneratedNativeAction(inputEvent);
+            LocalCoopInputRouter.ObserveSelectedOriginalSteamSource(inputEvent);
             LogSelectedOriginalSteamControllerBoundary(
                 settings,
                 inputEvent,
@@ -102,8 +100,7 @@ public static class ControllerInputOwnershipPatches
             return true;
         }
 
-        var isSelectedControllerActive = SteamControllerInputSelection.IsSelectedControllerActive(
-            controllerAssignment);
+        var isSelectedControllerActive = LocalCoopInputRouter.IsSelectedControllerActive(clientAssignment);
         if (ShouldSuppressNativeControllerInputForSelectedSteamController(
             typeName,
             methodName,
@@ -134,22 +131,60 @@ public static class ControllerInputOwnershipPatches
             isGeneratedSteamInput);
         if (shouldBridgeSelectedSteamInput)
         {
-            SteamControllerInputSelection.RegisterGeneratedUiCompanionAction(inputEvent);
+            var delivered = LocalCoopInputRouter.TryDeliverCanonicalInputToSink(
+                __instance,
+                __originalMethod,
+                inputEvent,
+                out var delivery);
             var bridgedResult = ControllerInputOwnership.ShouldProcess(
                 inputEvent,
                 controllerAssignment,
                 trustAsSelectedControllerInput: true) with
             {
-                ShouldProcess = false,
-                Reason = "bridged selected Steam controller action to generated action"
+                ShouldProcess = !delivered,
+                Reason = delivered
+                    ? "bridged selected Steam controller action to generated action"
+                    : "canonical bridge failed; allowing selected Steam controller action"
             };
             new BrokerEventLog(settings.EventLogPath).Write(
                 FormatControllerOwnershipLogLine(
                     bridgedResult,
                     inputEvent,
                     __instance.GetType().Name,
-                    __originalMethod.Name));
-            return false;
+                    __originalMethod.Name,
+                    FormatCanonicalDeliverySuffix(delivery)));
+            if (delivered)
+            {
+                MarkInputHandled(__instance, inputEvent);
+                return false;
+            }
+
+            return true;
+        }
+
+        var shouldAllowSelectedSteamInputThroughNonAuthoritativeSink = ShouldAllowSelectedSteamInputThroughNonAuthoritativeSink(
+            typeName,
+            methodName,
+            inputEvent,
+            controllerAssignment,
+            isGeneratedSteamInput);
+        if (shouldAllowSelectedSteamInputThroughNonAuthoritativeSink)
+        {
+            var bypassedResult = ControllerInputOwnership.ShouldProcess(
+                inputEvent,
+                controllerAssignment,
+                trustAsSelectedControllerInput: true) with
+            {
+                Reason = "selected Steam controller action bypassed non-authoritative bridge sink"
+            };
+            new BrokerEventLog(settings.EventLogPath).Write(
+                FormatControllerOwnershipLogLine(
+                    bypassedResult,
+                    inputEvent,
+                    __instance.GetType().Name,
+                    __originalMethod.Name,
+                    "canonicalDelivery=bypassed deliveryReason=\"non-authoritative-sink\""));
+            return true;
         }
 
         var isGeneratedUiCompanionInput = ShouldConsumeGeneratedUiCompanionAtSink(typeName, methodName)
@@ -267,6 +302,21 @@ public static class ControllerInputOwnershipPatches
         return ShouldBridgeSelectedSteamInputAtSink(typeName, methodName, inputEvent, assignment, selectedSteamInput);
     }
 
+    public static bool ShouldAllowSelectedSteamInputThroughNonAuthoritativeSinkForTesting(
+        string typeName,
+        string methodName,
+        object? inputEvent,
+        BrokerControllerDeviceAssignment assignment,
+        bool selectedSteamInput)
+    {
+        return ShouldAllowSelectedSteamInputThroughNonAuthoritativeSink(
+            typeName,
+            methodName,
+            inputEvent,
+            assignment,
+            selectedSteamInput);
+    }
+
     public static bool ShouldSuppressGeneratedSteamInputForNativeControllerDeviceZeroForTesting(
         string typeName,
         string methodName,
@@ -376,7 +426,21 @@ public static class ControllerInputOwnershipPatches
     {
         return selectedSteamInput
             && IsAssignedSelectedSteamDevice(assignment)
-            && IsRealInputSink(typeName, methodName)
+            && IsAuthoritativeBridgeSink(typeName, methodName)
+            && (SteamControllerInputSelection.CanMapUiCompanionAction(inputEvent)
+                || SteamControllerInputSelection.CanMapNativeGeneratedAction(inputEvent));
+    }
+
+    private static bool ShouldAllowSelectedSteamInputThroughNonAuthoritativeSink(
+        string typeName,
+        string methodName,
+        object? inputEvent,
+        BrokerControllerDeviceAssignment assignment,
+        bool selectedSteamInput)
+    {
+        return selectedSteamInput
+            && IsAssignedSelectedSteamDevice(assignment)
+            && IsNonAuthoritativeBridgeSink(typeName, methodName)
             && (SteamControllerInputSelection.CanMapUiCompanionAction(inputEvent)
                 || SteamControllerInputSelection.CanMapNativeGeneratedAction(inputEvent));
     }
@@ -447,6 +511,23 @@ public static class ControllerInputOwnershipPatches
             || IsGlobalMenuSink(typeName, methodName);
     }
 
+    private static bool IsAuthoritativeBridgeSink(
+        string typeName,
+        string methodName)
+    {
+        return IsCharacterSelectInputSink(typeName, methodName)
+            || (string.Equals(methodName, "_UnhandledInput", StringComparison.Ordinal)
+                && typeName.EndsWith(".NInputManager", StringComparison.Ordinal));
+    }
+
+    private static bool IsNonAuthoritativeBridgeSink(
+        string typeName,
+        string methodName)
+    {
+        return string.Equals(methodName, "_UnhandledInput", StringComparison.Ordinal)
+            && typeName.EndsWith(".NHotkeyManager", StringComparison.Ordinal);
+    }
+
     private static bool IsAssignedSelectedSteamDevice(BrokerControllerDeviceAssignment assignment)
     {
         return assignment.IsConfigured
@@ -456,13 +537,13 @@ public static class ControllerInputOwnershipPatches
     private static void LogSelectedSteamControllerBoundary(
         BrokerModeSettings settings,
         object? inputEvent,
-        bool companionDispatched,
+        ControllerSourceObservation observation,
         object instance,
         MethodBase method)
     {
         var result = ControllerInputOwnership.ShouldProcess(
             inputEvent,
-            ControllerAssignmentService.Resolve(settings.Config!).ControllerDevice,
+            LocalCoopInputRouter.ResolveAssignment(settings.Config!).ControllerDevice,
             trustAsSelectedControllerInput: true);
         new BrokerEventLog(settings.EventLogPath).Write(
             FormatControllerOwnershipLogLine(
@@ -470,7 +551,7 @@ public static class ControllerInputOwnershipPatches
                 inputEvent,
                 instance.GetType().Name,
                 method.Name,
-                $"boundary=selectedSteamController companionDispatched={companionDispatched}"));
+                $"boundary=selectedSteamController canonicalAccepted={observation.Accepted} canonicalAction={observation.CanonicalAction?.ToString() ?? "<none>"} targetAction={observation.TargetAction ?? "<none>"}"));
     }
 
     private static void LogSelectedOriginalSteamControllerBoundary(
@@ -481,7 +562,7 @@ public static class ControllerInputOwnershipPatches
     {
         var result = ControllerInputOwnership.ShouldProcess(
             inputEvent,
-            ControllerAssignmentService.Resolve(settings.Config!).ControllerDevice,
+            LocalCoopInputRouter.ResolveAssignment(settings.Config!).ControllerDevice,
             trustAsSelectedControllerInput: true);
         new BrokerEventLog(settings.EventLogPath).Write(
             FormatControllerOwnershipLogLine(
@@ -553,6 +634,31 @@ public static class ControllerInputOwnershipPatches
         }
 
         return $"generatedOriginalSteamInput={isGeneratedOriginalSteamInput} generatedNativeInput={isGeneratedNativeInput}";
+    }
+
+    private static string FormatCanonicalDeliverySuffix(CanonicalInputDelivery delivery)
+    {
+        return "canonicalDelivery="
+            + FormatCanonicalDeliveryStatus(delivery)
+            + $" canonicalAction={delivery.CanonicalAction?.ToString() ?? "<none>"}"
+            + $" targetAction={delivery.TargetAction ?? "<none>"}"
+            + $" deliveryMethod={delivery.Method ?? "<none>"}"
+            + $" deliveryReason=\"{delivery.Reason}\"";
+    }
+
+    private static string FormatCanonicalDeliveryStatus(CanonicalInputDelivery delivery)
+    {
+        if (!delivery.Delivered)
+        {
+            return "failed";
+        }
+
+        return delivery.Reason switch
+        {
+            "parsed" => "parsed",
+            "direct-authoritative" => "direct-authoritative",
+            _ => "delivered"
+        };
     }
 
     private static string FormatControllerOwnershipLogLine(

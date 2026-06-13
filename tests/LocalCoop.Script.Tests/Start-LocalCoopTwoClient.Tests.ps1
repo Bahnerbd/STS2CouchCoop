@@ -149,6 +149,7 @@ try {
         Assert-True ($portableClientConfig.Contains('clientIndex=1')) 'Release mode client config should include the client index.'
         Assert-True ($portableClientConfig.Contains('playerSlot=1')) 'Release mode client config should preserve keyboard-only player slot.'
         Assert-True ($portableClientConfig.Contains('inputMode=none')) 'Release mode client config should preserve keyboard-only input mode.'
+        Assert-True ($portableClientConfig.Contains('controllerDevice=none')) 'Release mode client config should include the legacy controller device key.'
         Assert-True ($portableClientConfig.Contains('endpoint=127.0.0.1:39001')) 'Release mode client config should include the broker endpoint.'
         Assert-True ($portableClientConfig.Contains('sessionId=portable-test')) 'Release mode client config should include the session id.'
     }

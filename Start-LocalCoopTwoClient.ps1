@@ -1247,6 +1247,12 @@ function Get-LocalCoopDetectedControllerCount {
     [CmdletBinding()]
     param()
 
+    $xinputSlots = @(Get-LocalCoopXInputControllerSlots)
+    $connectedXInputSlots = @($xinputSlots | Where-Object { $_.Connected })
+    if ($connectedXInputSlots.Count -gt 0) {
+        return $connectedXInputSlots.Count
+    }
+
     try {
         $controllers = Get-CimInstance Win32_PnPEntity -ErrorAction SilentlyContinue |
             Where-Object {
@@ -1263,6 +1269,59 @@ function Get-LocalCoopDetectedControllerCount {
     }
 }
 
+function Get-LocalCoopXInputControllerSlots {
+    [CmdletBinding()]
+    param()
+
+    if ($null -eq ('LocalCoopXInputProbe' -as [type])) {
+        $code = @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class LocalCoopXInputProbe {
+    [StructLayout(LayoutKind.Sequential)]
+    public struct XInputGamepad {
+        public ushort Buttons;
+        public byte LeftTrigger;
+        public byte RightTrigger;
+        public short ThumbLX;
+        public short ThumbLY;
+        public short ThumbRX;
+        public short ThumbRY;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct XInputState {
+        public uint PacketNumber;
+        public XInputGamepad Gamepad;
+    }
+
+    [DllImport("xinput1_4.dll", EntryPoint = "XInputGetState")]
+    public static extern int XInputGetState(int userIndex, out XInputState state);
+}
+'@
+
+        try {
+            Add-Type -TypeDefinition $code
+        }
+        catch {
+            Write-Warning ("Could not initialize XInput controller probe: {0}" -f $_.Exception.Message)
+            return @()
+        }
+    }
+
+    for ($slot = 0; $slot -lt 4; $slot++) {
+        $state = New-Object LocalCoopXInputProbe+XInputState
+        $result = [LocalCoopXInputProbe]::XInputGetState($slot, [ref]$state)
+        [pscustomobject]@{
+            Slot = $slot
+            Connected = ($result -eq 0)
+            Result = $result
+            PacketNumber = $state.PacketNumber
+        }
+    }
+}
+
 function Write-LocalCoopControllerAssignmentDiagnostics {
     [CmdletBinding()]
     param(
@@ -1273,10 +1332,22 @@ function Write-LocalCoopControllerAssignmentDiagnostics {
 
     $resolvedDevices = @(ConvertFrom-LocalCoopControllerDeviceList -ControllerDevices $ControllerDevices -ClientCount $ClientCount)
     $requestedControllerCount = @($resolvedDevices | Where-Object { -not [string]::Equals($_, 'none', [StringComparison]::OrdinalIgnoreCase) }).Count
-    $detectedControllerCount = Get-LocalCoopDetectedControllerCount
+    $xinputSlots = @(Get-LocalCoopXInputControllerSlots)
+    $connectedXInputSlots = @($xinputSlots | Where-Object { $_.Connected })
+    $detectedControllerCount = if ($connectedXInputSlots.Count -gt 0) {
+        $connectedXInputSlots.Count
+    }
+    else {
+        Get-LocalCoopDetectedControllerCount
+    }
+
+    Write-Host ("Controller diagnostics: requestedAutoClients={0} connectedXInputSlots={1} slots={2}" -f `
+        $requestedControllerCount, `
+        $connectedXInputSlots.Count, `
+        (($connectedXInputSlots | ForEach-Object { $_.Slot }) -join ','))
 
     if ($requestedControllerCount -gt $detectedControllerCount) {
-        Write-Warning ("Requested {0} controller-backed LocalCoop clients, but Windows prelaunch detection found {1} controller candidate(s). Steam Input may still resolve additional handles at runtime." -f $requestedControllerCount, $detectedControllerCount)
+        Write-Warning ("Requested {0} controller-backed LocalCoop clients, but Windows prelaunch detection found {1} controller candidate(s). Steam Input may still resolve additional handles at runtime; configure unavailable clients as none if the mod does not log a Steam handle assignment." -f $requestedControllerCount, $detectedControllerCount)
     }
 
     for ($clientIndex = 0; $clientIndex -lt $resolvedDevices.Count; $clientIndex++) {
@@ -1336,6 +1407,7 @@ function Format-LocalCoopClientBrokerConfig {
         "clientIndex=$ClientIndex"
         "playerSlot=$playerSlot"
         "inputMode=$inputMode"
+        "controllerDevice=$ControllerDevice"
         "endpoint=$($HostName):$Port"
         "sessionId=$SessionId"
         ''

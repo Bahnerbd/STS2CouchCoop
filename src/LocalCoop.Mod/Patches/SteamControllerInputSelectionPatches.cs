@@ -21,9 +21,9 @@ public static class SteamControllerInputSelectionPatches
             return true;
         }
 
-        SteamControllerInputSelection.ApplySelection(
+        LocalCoopInputRouter.ApplyControllerSelection(
             __instance,
-            ControllerAssignmentService.Resolve(settings.Config!).ControllerDevice,
+            LocalCoopInputRouter.ResolveAssignment(settings.Config!),
             message => new BrokerEventLog(settings.EventLogPath).Write(message));
         return false;
     }
@@ -37,7 +37,7 @@ public static class SteamControllerInputSelectionPatches
     {
         return settings.Enabled
             && settings.Config is not null
-            && ControllerAssignmentService.Resolve(settings.Config).ControllerDevice.IsConfigured;
+            && LocalCoopInputRouter.ResolveAssignment(settings.Config).ControllerDevice.IsConfigured;
     }
 
     private static BrokerModeSettings LoadSettings()

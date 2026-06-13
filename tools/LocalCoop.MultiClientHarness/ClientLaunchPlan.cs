@@ -74,6 +74,7 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
             $"clientIndex={clientIndex}",
             $"playerSlot={FormatPlayerSlot(clientIndex, controllerDevice)}",
             $"inputMode={FormatInputMode(controllerDevice)}",
+            $"controllerDevice={FormatControllerDevice(controllerDevice)}",
             $"endpoint={brokerHost}:{brokerPort}",
             $"sessionId={sessionId}",
             string.Empty);
@@ -87,6 +88,11 @@ public sealed record ClientLaunchPlan(IReadOnlyList<ClientLaunchPlanEntry> Clien
     private static string FormatInputMode(BrokerControllerDeviceAssignment controllerDevice)
     {
         return controllerDevice.Device is null ? "none" : "auto";
+    }
+
+    private static string FormatControllerDevice(BrokerControllerDeviceAssignment controllerDevice)
+    {
+        return controllerDevice.Device?.ToString() ?? "none";
     }
 }
 

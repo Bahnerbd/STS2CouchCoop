@@ -364,6 +364,46 @@ public static class SteamControllerInputSelection
         return true;
     }
 
+    public static bool TryCreateMappedInputEvent(
+        object? inputEvent,
+        out object? mappedInputEvent,
+        out string? targetAction)
+    {
+        mappedInputEvent = null;
+        targetAction = GetMappedTargetAction(inputEvent);
+        if (targetAction is null || inputEvent is null)
+        {
+            return false;
+        }
+
+        var duplicate = TryDuplicateInputEvent(inputEvent);
+        if (duplicate is null || !TrySetActionName(duplicate, targetAction))
+        {
+            return false;
+        }
+
+        mappedInputEvent = duplicate;
+        return true;
+    }
+
+    public static string? GetMappedTargetAction(object? inputEvent)
+    {
+        var action = GetActionName(inputEvent);
+        return MapSteamControllerActionToUiCompanion(action)
+            ?? MapSteamControllerActionToNativeGeneratedAction(action);
+    }
+
+    public static void AcceptGeneratedMappedInputEvent(object? inputEvent, string targetAction)
+    {
+        if (targetAction.StartsWith("ui_", StringComparison.Ordinal))
+        {
+            AcceptGeneratedUiCompanionInputEvent(inputEvent);
+            return;
+        }
+
+        AcceptGeneratedNativeInputEvent(inputEvent);
+    }
+
     public static bool TryDispatchUiCompanionInputEvent(object? inputEvent)
     {
         if (!TryCreateUiCompanionInputEvent(inputEvent, out var uiCompanionInputEvent)
@@ -511,6 +551,19 @@ public static class SteamControllerInputSelection
         lock (Lock)
         {
             AcceptedUiCompanionInputEvents.Add(inputEvent);
+        }
+    }
+
+    private static void AcceptGeneratedNativeInputEvent(object? inputEvent)
+    {
+        if (inputEvent is null)
+        {
+            return;
+        }
+
+        lock (Lock)
+        {
+            AcceptedNativeGeneratedInputEvents.Add(inputEvent);
         }
     }
 
@@ -1017,7 +1070,7 @@ public static class SteamControllerInputSelection
         return null;
     }
 
-    private static string? GetActionName(object? inputEvent)
+    public static string? GetActionName(object? inputEvent)
     {
         if (inputEvent is null)
         {

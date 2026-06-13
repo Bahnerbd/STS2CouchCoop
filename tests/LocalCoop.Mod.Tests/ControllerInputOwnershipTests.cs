@@ -337,13 +337,25 @@ public sealed class ControllerInputOwnershipTests
     [TestMethod]
     public void GlobalMenuSinksBridgeSelectedSteamControllerActionsAfterControllerManagerDispatch()
     {
-        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldBridgeSelectedSteamInputAtSinkForTesting(
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldBridgeSelectedSteamInputAtSinkForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NHotkeyManager",
+            "_UnhandledInput",
+            new FakeInputEventAction("controller_d_pad_south", device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            selectedSteamInput: true));
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldAllowSelectedSteamInputThroughNonAuthoritativeSinkForTesting(
             "MegaCrit.Sts2.Core.Nodes.CommonUi.NHotkeyManager",
             "_UnhandledInput",
             new FakeInputEventAction("controller_d_pad_south", device: 0),
             BrokerControllerDeviceAssignment.ForDevice(1),
             selectedSteamInput: true));
         Assert.IsTrue(ControllerInputOwnershipPatches.ShouldBridgeSelectedSteamInputAtSinkForTesting(
+            "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager",
+            "_UnhandledInput",
+            new FakeInputEventAction("controller_face_button_south", device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            selectedSteamInput: true));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldAllowSelectedSteamInputThroughNonAuthoritativeSinkForTesting(
             "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager",
             "_UnhandledInput",
             new FakeInputEventAction("controller_face_button_south", device: 0),
@@ -482,13 +494,13 @@ public sealed class ControllerInputOwnershipTests
             inputEvent,
             "NControllerManager",
             "_Input",
-            "boundary=selectedSteamController companionDispatched=True");
+            "boundary=selectedSteamController canonicalAccepted=True canonicalAction=Down targetAction=ui_down");
 
         StringAssert.Contains(line, "Controller input ownership: allowed device=0 action=controller_d_pad_south");
         StringAssert.Contains(line, "reason=selected Steam controller for controllerDevice=1.");
         StringAssert.Contains(line, "inputType=FakeInputEventAction");
         StringAssert.Contains(line, "method=NControllerManager._Input");
-        StringAssert.Contains(line, "boundary=selectedSteamController companionDispatched=True");
+        StringAssert.Contains(line, "boundary=selectedSteamController canonicalAccepted=True canonicalAction=Down targetAction=ui_down");
     }
 
     private sealed class FakeJoypadButton(int device, bool pressed = true)
