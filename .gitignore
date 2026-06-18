@@ -16,3 +16,8 @@ tmp/
 .localcoop-runtime/
 *.log
 *.pid
+
+# Local agent/process notes
+AGENTS.md
+docs/development/
+docs/superpowers/
