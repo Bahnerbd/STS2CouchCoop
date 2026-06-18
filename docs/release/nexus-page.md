@@ -50,11 +50,15 @@ Convenience batch files are included for 2, 3, and 4 players.
 ## Known Limitations
 
 - Experimental alpha; full gameplay stability is not guaranteed.
-- Controller/mouse cross-play is not supported.
+- Controller/mouse cross-play is not supported because STS2 switches into controller mode when any active player uses a controller, which deactivates or resets mouse control.
 - One controller per client is supported.
 - One mouse/keyboard controlling all clients is supported.
 - Multiple simultaneous mice through MouseMux or similar tools are untested and unsupported.
 - Future STS2 updates may break compatibility.
+
+Supporting mixed mouse/controller local clients would require LocalCoop to rewrite how STS2 handles controller and mouse input. This is outside the current alpha scope.
+
+See `KNOWN_ISSUES.md` in the repository for the current known bugs and limitations list.
 
 ## Troubleshooting
 

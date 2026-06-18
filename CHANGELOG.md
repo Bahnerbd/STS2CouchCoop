@@ -15,7 +15,7 @@ Initial Nexus-ready alpha release for Slay the Spire 2 v0.103.3 on Windows x64.
 ### Known Limitations
 
 - Experimental alpha; full gameplay stability is not guaranteed.
-- Controller/mouse cross-play is not supported.
+- Controller/mouse cross-play is not supported because STS2 switches into controller mode when any active player uses a controller, which deactivates or resets mouse control.
 - One controller per client is supported.
 - One mouse/keyboard controlling all clients is supported.
 - Multiple simultaneous mice through MouseMux or similar tools are untested and unsupported.

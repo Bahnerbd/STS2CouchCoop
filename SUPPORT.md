@@ -20,7 +20,7 @@ Please include:
 
 ## Known Unsupported Areas
 
-- Controller/mouse cross-play.
+- Controller/mouse cross-play. STS2 switches into controller mode when any active player uses a controller, which deactivates or resets mouse control. Supporting mixed mouse/controller local clients would require rewriting how STS2 handles controller and mouse input.
 - Multiple simultaneous mice through MouseMux or similar tools.
 - Arbitrary mod combinations.
 - Future STS2 versions that have not been tested with LocalCoop.

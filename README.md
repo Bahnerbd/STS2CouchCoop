@@ -56,7 +56,9 @@ Start-LocalCoop4Players.bat
 
 ## Input Modes
 
-Controller/mouse cross-play is not supported in this alpha.
+Controller/mouse cross-play is not supported in this alpha because STS2 does not split gameplay input between mouse and controller users. When any active player uses a controller, STS2 enters controller mode and deactivates or resets mouse control.
+
+This is a game input-system limitation, not just a missing LocalCoop quality-of-life feature. Supporting mixed mouse/controller local clients would require LocalCoop to rewrite how STS2 handles controller and mouse input.
 
 Supported:
 
@@ -69,6 +71,8 @@ Untested and unsupported:
 - multiple simultaneous mice through MouseMux or similar tools.
 
 MouseMux or similar tools may work in theory, but they are not tested or supported by this project.
+
+See [KNOWN_ISSUES.md](KNOWN_ISSUES.md) for the current known bugs and limitations list.
 
 ## Logs And Troubleshooting
 
