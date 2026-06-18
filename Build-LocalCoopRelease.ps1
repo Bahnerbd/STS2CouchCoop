@@ -100,6 +100,8 @@ function Assert-LocalCoopReleaseLayout {
         'LocalCoop.dll',
         'LocalCoop.Protocol.dll',
         'broker\LocalCoop.Broker.Cli.exe',
+        'Start-LocalCoop2Players.bat',
+        'Start-LocalCoop3Players.bat',
         'Start-LocalCoop4Players.bat',
         'Start-LocalCoopClients.ps1',
         'Start-LocalCoopTwoClient.ps1'
@@ -187,6 +189,64 @@ function Invoke-LocalCoopDotNet {
     }
     finally {
         Pop-Location
+    }
+}
+
+function Assert-LocalCoopReleasePublicReadiness {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$PackageRoot
+    )
+
+    $manifestPath = Join-Path $PackageRoot 'LocalCoop.json'
+    $readmePath = Join-Path $PackageRoot 'README.md'
+
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Public release manifest not found: $manifestPath"
+    }
+
+    if (-not (Test-Path -LiteralPath $readmePath -PathType Leaf)) {
+        throw "Public release README not found: $readmePath"
+    }
+
+    $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json
+    if ($manifest.author -ne 'Bahne') {
+        throw "Public release manifest author must be 'Bahne'."
+    }
+
+    $description = [string]$manifest.description
+    if ($description.IndexOf('Experimental alpha', [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+        throw "Public release manifest description must include 'Experimental alpha'."
+    }
+
+    $readme = Get-Content -Raw -LiteralPath $readmePath
+    $requiredReadmeText = @(
+        'Experimental Alpha',
+        'Slay the Spire 2 v0.103.3',
+        'Controller/mouse cross-play is not supported',
+        'GitHub Issues and Pull Requests are strongly preferred',
+        'LocalCoop does not include or license Slay the Spire 2 assets or binaries'
+    )
+
+    foreach ($requiredText in $requiredReadmeText) {
+        if ($readme.IndexOf($requiredText, [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+            throw "Public release README must include: $requiredText"
+        }
+    }
+
+    $forbiddenReadmeText = @(
+        'orphan branch',
+        'Current Slice',
+        'hold/paneling-ui-wip',
+        'Manual Four-Client Smoke',
+        'transport seam probe'
+    )
+
+    foreach ($forbiddenText in $forbiddenReadmeText) {
+        if ($readme.IndexOf($forbiddenText, [StringComparison]::OrdinalIgnoreCase) -ge 0) {
+            throw "Public release README must not include developer-only text: $forbiddenText"
+        }
     }
 }
 
@@ -295,6 +355,8 @@ function Invoke-LocalCoopReleaseBuild {
 
     Copy-Item -LiteralPath (Join-Path $repoRoot 'Start-LocalCoopClients.ps1') -Destination $packageRoot -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'Start-LocalCoopTwoClient.ps1') -Destination $packageRoot -Force
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'Start-LocalCoop2Players.bat') -Destination $packageRoot -Force
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'Start-LocalCoop3Players.bat') -Destination $packageRoot -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'Start-LocalCoop4Players.bat') -Destination $packageRoot -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $packageRoot -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'release\LocalCoop.json') -Destination (Join-Path $packageRoot 'LocalCoop.json') -Force
@@ -312,6 +374,7 @@ function Invoke-LocalCoopReleaseBuild {
 
     Assert-LocalCoopReleaseLayout -StageRoot $stageRoot
     Assert-LocalCoopReleaseFilePolicy -PackageRoot $packageRoot -IncludeSymbols:$IncludeSymbols
+    Assert-LocalCoopReleasePublicReadiness -PackageRoot $packageRoot
 
     if (Test-Path -LiteralPath $zipPath) {
         Remove-Item -LiteralPath $zipPath -Force

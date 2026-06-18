@@ -1,182 +1,120 @@
-# LocalCoop Transport Broker
+# LocalCoop for Slay the Spire 2
 
-This orphan branch is a clean-start prototype for same-machine multi-client local co-op.
+LocalCoop is an experimental same-machine local co-op launcher and transport bridge for Slay the Spire 2.
 
-The previous in-process synthetic-player and paneling UI work is preserved on:
+It starts multiple local STS2 clients, assigns input slots, runs a loopback broker, and bridges the game's native multiplayer traffic between those clients.
 
-```text
-hold/paneling-ui-wip-20260525
-```
+## Status
 
-## Current Slice
+LocalCoop is an Experimental Alpha tested against Slay the Spire 2 v0.103.3 on Windows x64.
 
-- `LocalCoop.Protocol` defines broker client config parsing, transport envelopes, and length-prefixed frame encoding.
-- `LocalCoop.Protocol` also includes a reusable TCP client connection helper that registers with the broker and reads/writes envelopes.
-- `LocalCoop.Broker` tracks registered clients, acknowledges registration, and routes direct or broadcast envelopes without understanding gameplay.
-- `LocalCoop.Broker.Cli` starts a loopback TCP broker.
-- `LocalCoop.MultiClientHarness` creates deterministic broker config text, writes per-client config folders, assigns controller devices by client index by default, and can run a non-game four-client broker smoke.
-- `LocalCoop.Mod` reads `enable-local-broker.txt` from `LOCALCOOP_CONFIG_DIR` or the mod directory, derives the per-process client id and log path, initializes through the STS2 mod loader, runs a focused transport seam probe, applies optional controller input ownership, and logs lobby/net-service diagnostics.
-- `LocalCoop.Mod` includes a broker-backed net-service adapter for typed lobby message registration, send, and main-thread dispatch. It is substituted into the STS2 character-select host/client lifecycle in broker mode.
+Expect rough edges. This release does not promise polished split-screen presentation, full gameplay stability, compatibility with every future STS2 update, or compatibility with arbitrary mod combinations.
 
-## Architecture Principles
+## Requirements
 
-See [AGENTS.md](AGENTS.md) for the repo's agent-facing development rules.
+- Slay the Spire 2 installed on Windows.
+- A copy of the LocalCoop release zip.
+- One controller per local client, or one mouse/keyboard controlling all clients.
 
-- STS2 owns lobby and gameplay truth.
-- LocalCoop should bridge communication, not manually reconcile lobby state.
-- The broker transports opaque envelopes and preserves sender/target identity.
-- `client-0` may be a harness default, but it should not be treated as the semantic host in future runtime design.
+## Install
 
-## Fresh Development Setup
-
-Requirements:
-
-- Slay the Spire 2 installed locally.
-- .NET 9 SDK installed.
-- A clone of this repo. The repo may be inside the STS2 install folder or anywhere else.
-
-If the repo is cloned directly under the game folder as `Slay the Spire 2\LocalCoopMod`, the default build paths work without extra properties:
-
-```powershell
-dotnet restore LocalCoopTransport.sln
-dotnet test LocalCoopTransport.sln -p:OutputPath=bin\Debug\net9.0-test\
-dotnet build src\LocalCoop.Mod\LocalCoop.Mod.csproj
-```
-
-If the repo is cloned somewhere else, pass the game root explicitly:
-
-```powershell
-$gameRoot = 'D:\SteamLibrary\steamapps\common\Slay the Spire 2'
-dotnet restore LocalCoopTransport.sln
-dotnet test LocalCoopTransport.sln -p:Sts2GameRoot="$gameRoot" -p:OutputPath=bin\Debug\net9.0-test\
-dotnet build src\LocalCoop.Mod\LocalCoop.Mod.csproj -p:Sts2GameRoot="$gameRoot"
-```
-
-The mod build writes to:
-
-```text
-<Sts2GameRoot>\mods\LocalCoop\LocalCoop.dll
-```
-
-## Run
-
-```powershell
-dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-clients .localcoop-clients 4 local-test 38989
-dotnet run --project src\LocalCoop.Broker.Cli -- local-test 38989
-```
-
-## Build A Portable Release
-
-This repo can produce a Windows manual-install zip for STS2 `v0.103.3`.
-
-```powershell
-.\Build-LocalCoopRelease.ps1 -GameRoot '..' -Version 0.1.0 -OutputRoot artifacts\release
-```
-
-From a checkout outside the game folder, pass the absolute game root:
-
-```powershell
-.\Build-LocalCoopRelease.ps1 -GameRoot 'D:\SteamLibrary\steamapps\common\Slay the Spire 2' -Version 0.1.0 -OutputRoot artifacts\release
-```
-
-The release script restores its packaged runtime projects by default. If you have already restored them, add `-SkipRestore`.
-
-The release artifact is named like:
-
-```text
-artifacts\release\LocalCoop-v0.1.0-sts2-v0.103.3-win-x64.zip
-```
-
-The zip contains only the `LocalCoop` mod folder, launch scripts, manifest, and packaged loopback broker. It intentionally excludes STS2 binaries, local marker files, logs, probes, source-only harness output, and debug symbols by default.
-
-## Portable Install
-
-1. Extract the zip so the folder lands at:
+1. Download the LocalCoop release zip.
+2. Extract it into your Slay the Spire 2 install folder so the mod lands here:
 
 ```text
 Slay the Spire 2\mods\LocalCoop
 ```
 
-2. Start local clients from that folder:
+3. Confirm this file exists:
+
+```text
+Slay the Spire 2\mods\LocalCoop\LocalCoop.json
+```
+
+## Launch
+
+Open PowerShell in `Slay the Spire 2\mods\LocalCoop` and run:
 
 ```powershell
 .\Start-LocalCoopClients.ps1 -ClientCount 4 -ControllerDevices '0,1,2,3'
 ```
 
-In a packaged install, generated client configs and broker launcher logs are written under:
+For two or three clients, use:
+
+```powershell
+.\Start-LocalCoopClients.ps1 -ClientCount 2 -ControllerDevices '0,1'
+.\Start-LocalCoopClients.ps1 -ClientCount 3 -ControllerDevices '0,1,2'
+```
+
+Convenience launchers are also included:
+
+```text
+Start-LocalCoop2Players.bat
+Start-LocalCoop3Players.bat
+Start-LocalCoop4Players.bat
+```
+
+## Input Modes
+
+Controller/mouse cross-play is not supported in this alpha.
+
+Supported:
+
+- one controller per client;
+- one mouse/keyboard controlling all clients.
+
+Untested and unsupported:
+
+- mixing controller and mouse control across different clients;
+- multiple simultaneous mice through MouseMux or similar tools.
+
+MouseMux or similar tools may work in theory, but they are not tested or supported by this project.
+
+## Logs And Troubleshooting
+
+Packaged launches write generated configs and broker logs under:
 
 ```text
 %APPDATA%\SlayTheSpire2\LocalCoop
 ```
 
-The packaged launcher uses `broker\LocalCoop.Broker.Cli.exe` directly. A source checkout still uses the local `dotnet` broker/harness workflow for development.
-
-Because LocalCoop launches `SlayTheSpire2.exe` directly to give each client its own config directory, the launcher ensures this file exists beside the game executable:
-
-```text
-steam_appid.txt
-```
-
-with the STS2 app id:
-
-```text
-2868840
-```
-
-## Broker Config
-
-`enable-local-broker.txt` supports these keys:
-
-```text
-role=host|client
-clientIndex=0..3
-playerSlot=0..3
-inputMode=auto|none
-endpoint=127.0.0.1:<port>
-sessionId=<id>
-```
-
-`playerSlot` and `inputMode` are the canonical input assignment keys. `inputMode=auto` lets LocalCoop prefer Steam Input and fall back to XInput/Godot controller routing when needed. Use `inputMode=none` for keyboard-only processes.
-
-`controllerDevice=0..3|none` is still accepted for compatibility. Integer values map to `playerSlot`; `none` maps to `inputMode=none`.
-
-## Manual Four-Client Smoke
-
-1. Remove stale `enable-local-injection.txt` from `mods\LocalCoop` if present; this clean branch does not use it.
-2. Generate per-client configs:
+If PowerShell blocks the launcher, open PowerShell from the LocalCoop folder and run:
 
 ```powershell
-dotnet run --project tools\LocalCoop.MultiClientHarness -- prepare-clients .localcoop-clients 4 local-test 38989
+powershell -ExecutionPolicy Bypass -File .\Start-LocalCoopClients.ps1 -ClientCount 2 -ControllerDevices '0,1'
 ```
 
-For a one-command launcher that starts a fresh broker, prepares configs, and launches clients, use:
+If controller assignment looks wrong, start with two clients and two controllers:
 
 ```powershell
-.\Start-LocalCoopClients.ps1 -ClientCount 4 -ControllerDevices '0,1,2,3'
+.\Start-LocalCoopClients.ps1 -ClientCount 2 -ControllerDevices '0,1'
 ```
 
-The launcher places each client with a startup-aware Win32 stabilization pass: client 0 top-left, client 1 top-right, client 2 bottom-left, and client 3 bottom-right. It does not pass STS2/Godot native window position args by default because STS2 can apply its own resize later during startup and overwrite early placement. By default, the launcher waits until every client writes its LocalCoop startup event log, then re-applies placement for 15 seconds so the final pass happens after the game has loaded far enough to show its early startup UI. Use `-SkipWindowPlacement` to leave windows untouched, or adjust `-WindowPlacementReadinessTimeoutSeconds <seconds>`, `-WindowPlacementStartupDelaySeconds <seconds>`, `-WindowPlacementStabilizationSeconds <seconds>`, and `-WindowPlacementRetryIntervalMilliseconds <milliseconds>` if a machine needs a shorter or longer placement window; `-WindowPlacementTimeoutSeconds <seconds>` controls how long the launcher waits for each STS2 main window.
+To uninstall, delete:
 
-The controller list is optional. By default, client index maps to controller device index. Use `none` for a client with no assigned controller, for example `-ControllerDevices '0,1,none,3'`.
-
-3. Start the broker:
-
-```powershell
-dotnet run --project src\LocalCoop.Broker.Cli -- local-test 38989
+```text
+Slay the Spire 2\mods\LocalCoop
+%APPDATA%\SlayTheSpire2\LocalCoop
 ```
 
-4. Launch STS2 from Steam for the host path using the generated `client-0` config directory.
-5. Launch STS2 from Steam for the client paths using the generated `client-1`, `client-2`, and `client-3` config directories.
-6. Inspect these files under `mods\LocalCoop`:
-   - `localcoop-host-0-events.txt`
-   - `localcoop-client-1-events.txt`
-   - `localcoop-client-2-events.txt`
-   - `localcoop-client-3-events.txt`
-   - `localcoop-transport-probe-client-0.txt`
-   - `localcoop-transport-probe-client-1.txt`
-   - `localcoop-transport-probe-client-2.txt`
-   - `localcoop-transport-probe-client-3.txt`
+## Support
 
-Expected evidence is native lobby message flow over the broker: broker mode enabled, lifecycle entry logs, thin transport lobby message logs, and no `Broker replay outbound`, pending character flush, or lobby-state coalescing.
+Pull requests and bug reports are welcome. GitHub Issues and Pull Requests are strongly preferred.
 
-`prepare-two-client` and `Start-LocalCoopTwoClient.ps1` remain available as two-client compatibility entrypoints for regression smoke runs.
+Nexus comments may be read, but GitHub is the support source of truth. This is an alpha project with no guarantee of continued feature work. Best-effort compatibility fixes may happen while the maintainer is still actively playing Slay the Spire 2.
+
+Useful bug reports include:
+
+- Slay the Spire 2 version;
+- LocalCoop version;
+- Windows version;
+- player count;
+- controller and mouse/keyboard setup;
+- reproduction steps;
+- logs from `%APPDATA%\SlayTheSpire2\LocalCoop`.
+
+## Credits
+
+LocalCoop is maintained by Bahne. Codex assisted with development.
+
+LocalCoop does not include or license Slay the Spire 2 assets or binaries. You must own and install Slay the Spire 2 separately.

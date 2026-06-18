@@ -1,8 +1,8 @@
 {
   "id": "LocalCoop",
-  "name": "Local Co-op",
-  "author": "bahne + Codex",
-  "description": "Experimental same-machine local co-op transport bridge for Slay the Spire 2.",
+  "name": "LocalCoop",
+  "author": "Bahne",
+  "description": "Experimental alpha same-machine local co-op launcher and transport bridge for Slay the Spire 2.",
   "version": "0.1.0",
   "has_pck": false,
   "has_dll": true,
