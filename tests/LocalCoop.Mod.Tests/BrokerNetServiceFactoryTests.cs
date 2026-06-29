@@ -324,6 +324,26 @@ public sealed class BrokerNetServiceFactoryTests
         Assert.IsTrue(peer.readyForBroadcasting);
     }
 
+    [TestMethod]
+    public void BrokerNetGameServiceAcceptsNativeMessageBufferToggle()
+    {
+        var logs = new List<string>();
+        var inner = new BrokerBackedNetService(
+            "local-test",
+            "client-0",
+            0,
+            new CapturingTransport(),
+            logs.Add);
+        using var service = new BrokerNetGameService(inner, NetGameType.Host);
+
+        service.SetBufferMessages(true);
+        service.SetBufferMessages(false);
+
+        Assert.IsFalse(inner.IsBufferingMessages);
+        Assert.IsTrue(logs.Any(message => message.Contains("bufferMessages=True", StringComparison.Ordinal)));
+        Assert.IsTrue(logs.Any(message => message.Contains("bufferMessages=False", StringComparison.Ordinal)));
+    }
+
     private sealed class CapturingTransport : IBrokerEnvelopeTransport
     {
         public CapturingTransport(IReadOnlyList<BrokerClientRegistrationInfo>? connectedPeers = null)

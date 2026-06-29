@@ -57,6 +57,8 @@ public sealed class BrokerBackedNetService
 
     public bool IsGameLoading { get; private set; }
 
+    public bool IsBufferingMessages { get; private set; }
+
     public IReadOnlyList<ulong> ConnectedPeerIds
     {
         get
@@ -181,6 +183,12 @@ public sealed class BrokerBackedNetService
     {
         IsGameLoading = isGameLoading;
         _log?.Invoke($"Broker game loading changed: sessionId={_sessionId} client={_clientId} isGameLoading={isGameLoading}.");
+    }
+
+    public void SetBufferMessages(bool bufferMessages)
+    {
+        IsBufferingMessages = bufferMessages;
+        _log?.Invoke($"Broker message buffering changed: sessionId={_sessionId} client={_clientId} bufferMessages={bufferMessages}.");
     }
 
     public void SetPeerReadyForBroadcasting(ulong peerId)
