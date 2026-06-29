@@ -489,6 +489,115 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task BufferableInboundMessagesWaitUntilBufferingIsDisabled()
+    {
+        var transport = new QueuedTransport();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
+        var received = new List<bool>();
+        service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>(message => received.Add(message.ready));
+
+        service.SetBufferMessages(true);
+        var loop = service.RunReceiveLoopAsync(CancellationToken.None);
+        await transport.QueueEnvelopeAsync(EnvelopeForMessage(
+            "client-0",
+            targetClientId: "client-1",
+            new LobbyPlayerSetReadyMessage { ready = true },
+            sequence: 1));
+        await Task.Delay(50);
+        service.Update();
+
+        Assert.AreEqual(0, received.Count);
+
+        service.SetBufferMessages(false);
+        service.Update();
+        await transport.CompleteAsync();
+        await loop.WaitAsync(TimeSpan.FromSeconds(1));
+
+        CollectionAssert.AreEqual(new[] { true }, received);
+    }
+
+    [TestMethod]
+    public async Task BufferedMessagesFlushInFifoOrder()
+    {
+        var transport = new QueuedTransport();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
+        var received = new List<bool>();
+        service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>(message => received.Add(message.ready));
+
+        service.SetBufferMessages(true);
+        var loop = service.RunReceiveLoopAsync(CancellationToken.None);
+        await transport.QueueEnvelopeAsync(EnvelopeForMessage(
+            "client-0",
+            targetClientId: "client-1",
+            new LobbyPlayerSetReadyMessage { ready = false },
+            sequence: 1));
+        await transport.QueueEnvelopeAsync(EnvelopeForMessage(
+            "client-0",
+            targetClientId: "client-1",
+            new LobbyPlayerSetReadyMessage { ready = true },
+            sequence: 2));
+        await Task.Delay(50);
+        service.Update();
+
+        service.SetBufferMessages(false);
+        service.Update();
+        await transport.CompleteAsync();
+        await loop.WaitAsync(TimeSpan.FromSeconds(1));
+
+        CollectionAssert.AreEqual(new[] { false, true }, received);
+    }
+
+    [TestMethod]
+    public async Task NonBufferableInboundMessagesDispatchWhileBuffering()
+    {
+        var transport = new QueuedTransport();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
+        var receivedCount = 0;
+        service.RegisterMessageHandler<PeerInputMessage>(_ => receivedCount++);
+
+        service.SetBufferMessages(true);
+        var loop = service.RunReceiveLoopAsync(CancellationToken.None);
+        await transport.QueueEnvelopeAsync(EnvelopeForMessage(
+            "client-0",
+            targetClientId: "client-1",
+            new PeerInputMessage(),
+            sequence: 1));
+        await Task.Delay(50);
+        service.Update();
+        await transport.CompleteAsync();
+        await loop.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.AreEqual(1, receivedCount);
+    }
+
+    [TestMethod]
+    public async Task BufferedInboundMessagesStillWaitForExactHandlerRegistration()
+    {
+        var transport = new QueuedTransport();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
+        var receivedCount = 0;
+
+        service.SetBufferMessages(true);
+        var loop = service.RunReceiveLoopAsync(CancellationToken.None);
+        await transport.QueueEnvelopeAsync(EnvelopeForMessage(
+            "client-0",
+            targetClientId: "client-1",
+            new LobbyPlayerSetReadyMessage { ready = true },
+            sequence: 1));
+        await Task.Delay(50);
+        service.Update();
+        service.SetBufferMessages(false);
+        service.Update();
+
+        service.RegisterMessageHandler<LobbyPlayerSetReadyMessage>(_ => receivedCount++);
+        service.Update();
+        await transport.CompleteAsync();
+        await loop.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.AreEqual(1, receivedCount);
+    }
+
+    [TestMethod]
     public async Task EarlyJoinResponseAndCharacterStateFlushAfterHandlersRegister()
     {
         var transport = new QueuedTransport();

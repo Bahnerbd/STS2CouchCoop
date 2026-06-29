@@ -19,21 +19,20 @@ public sealed class LocalCoopPatchInstallerTests
                 typeof(LocalCoop.Mod.Patches.BrokerHostENetStartupBypassPatch),
                 typeof(LocalCoop.Mod.Patches.BrokerLobbyServiceSubstitutionPatch),
                 typeof(LocalCoop.Mod.Patches.BrokerBeginRunPatch),
+                typeof(LocalCoop.Mod.Patches.BrokerPlayerDisplayNamePlatformPatch),
+                typeof(LocalCoop.Mod.Patches.BrokerPlayerDisplayNameNameplatePatch),
+                typeof(LocalCoop.Mod.Patches.BaseLibHealthBarForecastCompatibilityPatch),
                 typeof(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches),
-                typeof(LocalCoop.Mod.Patches.ControllerInputOwnershipPatches),
-                typeof(LocalCoop.Mod.Patches.RunIdentityLaunchPatch),
-                typeof(LocalCoop.Mod.Patches.RunIdentityDualRoleAdventureVoidGuardPatch),
-                typeof(LocalCoop.Mod.Patches.RunIdentityDualRoleAdventureBoolGuardPatch),
-                typeof(LocalCoop.Mod.Patches.RunIdentityLocalUiAlignmentPatch),
-                typeof(LocalCoop.Mod.Patches.RunIdentityRewardAlignmentPatch),
-                typeof(LocalCoop.Mod.Patches.RunIdentityPotionAnimationGuardPatch),
-                typeof(LocalCoop.Mod.Patches.RunIdentityRelicInventoryVisualGuardPatch),
-                typeof(LocalCoop.Mod.Patches.RunIdentityRemoteEventUiGuardPatch),
-                typeof(LocalCoop.Mod.Patches.RunIdentityLocalActionGuardPatch),
-                typeof(LocalCoop.Mod.Patches.RunIdentityRemoteMutationGuardPatch),
-                typeof(LocalCoop.Mod.Patches.RunIdentityRemoteMutationTaskGuardPatch)
+                typeof(LocalCoop.Mod.Patches.ControllerInputOwnershipPatches)
             },
             LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray());
+    }
+
+    [TestMethod]
+    public void DefaultPatchTypesDoNotContainRunIdentityGameplayOverrides()
+    {
+        Assert.IsFalse(LocalCoopPatchInstaller.DefaultPatchTypesForTesting.Any(type =>
+            type.Name.StartsWith("RunIdentity", StringComparison.Ordinal)));
     }
 
     [TestMethod]

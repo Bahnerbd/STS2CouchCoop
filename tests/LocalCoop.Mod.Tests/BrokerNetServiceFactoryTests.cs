@@ -126,7 +126,7 @@ public sealed class BrokerNetServiceFactoryTests
     }
 
     [TestMethod]
-    public async Task BrokerNetGameServiceDispatchReassertsLocalContextForNativeHandlers()
+    public async Task BrokerNetGameServiceDispatchRestoresPreviousLocalContextAfterNativeHandlers()
     {
         var previousNetId = LocalContext.NetId;
         var inner = new BrokerBackedNetService(
@@ -152,7 +152,7 @@ public sealed class BrokerNetServiceFactoryTests
                 CancellationToken.None);
 
             Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), observedNetId);
-            Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), LocalContext.NetId);
+            Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), LocalContext.NetId);
         }
         finally
         {

@@ -194,6 +194,8 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
 
     private void InvokeWithLocalContext(Type messageType, ulong senderId, object? message, Action handler)
     {
+        var previousNetId = LocalContext.NetId;
+
         if (messageType.Name.Contains("MerchantCardRemovalMessage", StringComparison.Ordinal))
         {
             RunIdentityDiagnostics.StartCorrelation("shop-remove-message");
@@ -216,8 +218,8 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
         }
         finally
         {
-            LocalContext.NetId = NetId;
             RunIdentityDiagnostics.LogBrokerHandler("exit", NetId, Type, messageType, senderId, message);
+            LocalContext.NetId = previousNetId;
         }
     }
 
