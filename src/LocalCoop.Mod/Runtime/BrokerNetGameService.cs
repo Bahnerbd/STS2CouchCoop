@@ -150,6 +150,11 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
         _inner.SetGameLoading(isLoading);
     }
 
+    public void SetBufferMessages(bool bufferMessages)
+    {
+        _inner.SetBufferMessages(bufferMessages);
+    }
+
     public string GetRawLobbyIdentifier()
     {
         return _inner.GetRawLobbyIdentifier();

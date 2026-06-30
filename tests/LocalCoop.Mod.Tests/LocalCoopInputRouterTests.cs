@@ -35,6 +35,15 @@ public sealed class LocalCoopInputRouterTests
         Assert.AreEqual(
             CanonicalInputAction.Confirm,
             LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("controller_face_button_south", device: 0)));
+        Assert.AreEqual(
+            CanonicalInputAction.TabLeft,
+            LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("controller_left_bumper", device: 0)));
+        Assert.AreEqual(
+            CanonicalInputAction.TabRight,
+            LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("controller_right_bumper", device: 0)));
+        Assert.AreEqual(
+            CanonicalInputAction.Settings,
+            LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("controller_start_button", device: 0)));
         Assert.IsNull(LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("ui_down", device: 0)));
     }
 
@@ -62,6 +71,36 @@ public sealed class LocalCoopInputRouterTests
         var parsed = (ParsedInputEvent)Godot.Input.Parsed[0];
         Assert.AreEqual("ui_down", parsed.Action);
         Assert.IsTrue(SteamControllerInputSelection.TryConsumeGeneratedUiCompanionInputEvent(parsed));
+    }
+
+    [TestMethod]
+    public void DeliversXboxBumperAndMenuAliasesThroughGodotParse()
+    {
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        Godot.Input.Parsed.Clear();
+        var sink = new RecordingSink();
+        var method = typeof(RecordingSink).GetMethod(nameof(RecordingSink.Handle), BindingFlags.Instance | BindingFlags.Public)!;
+
+        AssertXboxAliasDelivery(
+            sink,
+            method,
+            "controller_left_bumper",
+            CanonicalInputAction.TabLeft,
+            "mega_view_deck_and_tab_left");
+        AssertXboxAliasDelivery(
+            sink,
+            method,
+            "controller_right_bumper",
+            CanonicalInputAction.TabRight,
+            "mega_view_exhaust_pile_and_tab_right");
+        AssertXboxAliasDelivery(
+            sink,
+            method,
+            "controller_start_button",
+            CanonicalInputAction.Settings,
+            "mega_pause_and_back");
+
+        Assert.AreEqual(0, sink.Handled.Count);
     }
 
     [TestMethod]
@@ -136,6 +175,28 @@ public sealed class LocalCoopInputRouterTests
         {
             Handled.Add(inputEvent);
         }
+    }
+
+    private static void AssertXboxAliasDelivery(
+        object sink,
+        MethodBase method,
+        string sourceAction,
+        CanonicalInputAction canonicalAction,
+        string targetAction)
+    {
+        var delivered = LocalCoopInputRouter.TryDeliverCanonicalInputToSink(
+            sink,
+            method,
+            new ParsedInputEvent(sourceAction, device: 0),
+            out var delivery);
+
+        Assert.IsTrue(delivered, sourceAction);
+        Assert.IsTrue(delivery.Delivered, sourceAction);
+        Assert.AreEqual(canonicalAction, delivery.CanonicalAction, sourceAction);
+        Assert.AreEqual(targetAction, delivery.TargetAction, sourceAction);
+        var parsed = (ParsedInputEvent)Godot.Input.Parsed[^1];
+        Assert.AreEqual(targetAction, parsed.Action, sourceAction);
+        Assert.IsTrue(SteamControllerInputSelection.TryConsumeGeneratedNativeInputEvent(parsed), sourceAction);
     }
 
     private sealed class NInputManager

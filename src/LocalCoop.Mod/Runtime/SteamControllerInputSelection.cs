@@ -912,7 +912,17 @@ public static class SteamControllerInputSelection
     {
         return new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            [FallbackTopPanelSourceAction] = FallbackTopPanelNativeAction
+            [FallbackTopPanelSourceAction] = FallbackTopPanelNativeAction,
+            ["controller_left_shoulder"] = "mega_view_deck_and_tab_left",
+            ["controller_left_bumper"] = "mega_view_deck_and_tab_left",
+            ["controller_right_shoulder"] = "mega_view_exhaust_pile_and_tab_right",
+            ["controller_right_bumper"] = "mega_view_exhaust_pile_and_tab_right",
+            ["controller_left_trigger"] = "mega_view_draw_pile",
+            ["controller_right_trigger"] = "mega_view_discard_pile",
+            ["controller_ps4_touchpad"] = "mega_view_map",
+            ["controller_start"] = "mega_pause_and_back",
+            ["controller_start_button"] = "mega_pause_and_back",
+            ["controller_face_button_north"] = "mega_peek"
         };
     }
 

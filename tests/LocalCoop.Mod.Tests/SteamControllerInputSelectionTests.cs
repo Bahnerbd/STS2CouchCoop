@@ -456,6 +456,26 @@ public sealed class SteamControllerInputSelectionTests
             now.AddMilliseconds(10)));
     }
 
+    [DataTestMethod]
+    [DataRow("controller_left_bumper", "mega_view_deck_and_tab_left")]
+    [DataRow("controller_right_bumper", "mega_view_exhaust_pile_and_tab_right")]
+    [DataRow("controller_start_button", "mega_pause_and_back")]
+    public void FallsBackToObservedXboxNativeActionAliasesWhenConfigMapIsUnavailable(
+        string sourceAction,
+        string nativeAction)
+    {
+        var now = new DateTimeOffset(2026, 6, 13, 17, 37, 0, TimeSpan.Zero);
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+
+        SteamControllerInputSelection.RegisterGeneratedNativeAction(
+            new FakeInputEventAction(sourceAction, device: 0),
+            now);
+
+        Assert.IsTrue(SteamControllerInputSelection.TryConsumeGeneratedNativeInputEvent(
+            new FakeInputEventAction(nativeAction, device: 0),
+            now.AddMilliseconds(10)));
+    }
+
     [TestMethod]
     public void ConsumesGeneratedOriginalSteamControllerMotionByShapeForSinkClone()
     {

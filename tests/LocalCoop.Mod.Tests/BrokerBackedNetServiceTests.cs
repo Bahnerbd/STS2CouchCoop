@@ -376,6 +376,37 @@ public sealed class BrokerBackedNetServiceTests
     }
 
     [TestMethod]
+    public async Task ReceiveLoopKeepsInboundEnvelopesQueuedWhileBufferingMessages()
+    {
+        var transport = new QueuedTransport();
+        var service = new BrokerBackedNetService("local-test", "client-1", 1, transport);
+        FakeLobbyMessage? received = null;
+        service.RegisterMessageHandler<FakeLobbyMessage>(message => received = message);
+
+        var loop = service.RunReceiveLoopAsync(CancellationToken.None);
+        await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            new FakeLobbyMessage("buffered"),
+            sequence: 1));
+        await Task.Delay(50);
+
+        service.SetBufferMessages(true);
+        service.Update();
+
+        Assert.IsNull(received);
+
+        service.SetBufferMessages(false);
+        service.Update();
+        await transport.CompleteAsync();
+        await loop.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.IsNotNull(received);
+        Assert.AreEqual("buffered", received.Value.Kind);
+    }
+
+    [TestMethod]
     public async Task ReceiveLoopHandlersRunOnUpdateThread()
     {
         var transport = new QueuedTransport();

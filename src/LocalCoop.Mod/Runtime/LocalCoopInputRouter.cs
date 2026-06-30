@@ -151,12 +151,12 @@ public static class LocalCoopInputRouter
             "controller_face_button_south" => CanonicalInputAction.Confirm,
             "controller_face_button_east" => CanonicalInputAction.Cancel,
             "controller_face_button_west" => CanonicalInputAction.Select,
-            "controller_left_shoulder" => CanonicalInputAction.TabLeft,
-            "controller_right_shoulder" => CanonicalInputAction.TabRight,
+            "controller_left_shoulder" or "controller_left_bumper" => CanonicalInputAction.TabLeft,
+            "controller_right_shoulder" or "controller_right_bumper" => CanonicalInputAction.TabRight,
             "controller_left_trigger" => CanonicalInputAction.PileLeft,
             "controller_right_trigger" => CanonicalInputAction.PileRight,
             "controller_ps4_touchpad" => CanonicalInputAction.Map,
-            "controller_start" => CanonicalInputAction.Settings,
+            "controller_start" or "controller_start_button" => CanonicalInputAction.Settings,
             "controller_face_button_north" => CanonicalInputAction.Peek,
             _ => null
         };

@@ -231,7 +231,6 @@ public sealed class BrokerClientJoinFlowTests
         {
             version = "test",
             idDatabaseHash = 0,
-            mods = [],
             gameMode = GameMode.Standard,
             sessionState = RunSessionState.InLobby,
             connectionFailureReason = null
