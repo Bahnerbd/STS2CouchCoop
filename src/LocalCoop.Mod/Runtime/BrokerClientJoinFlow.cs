@@ -88,51 +88,81 @@ public static class BrokerClientJoinFlow
             BrokerClientRole.Client) ?? throw new InvalidOperationException("Broker client service could not be created.");
         var service = new BrokerNetGameService(inner, NetGameType.Client);
         var initialInfoSource = new TaskCompletionSource<InitialGameInfoMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
-        var responseSource = new TaskCompletionSource<ClientLobbyJoinResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lobbyResponseSource = new TaskCompletionSource<ClientLobbyJoinResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var loadResponseSource = new TaskCompletionSource<ClientLoadJoinResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var rejoinResponseSource = new TaskCompletionSource<ClientRejoinResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         Action<InitialGameInfoMessage> initialInfoHandler = initialInfo => initialInfoSource.TrySetResult(initialInfo);
-        Action<ClientLobbyJoinResponseMessage> responseHandler = response => responseSource.TrySetResult(response);
-        using var cancellationRegistration = cancellationToken.Register(
-            static state =>
-            {
-                var (initialInfoSource, responseSource, token) = ((TaskCompletionSource<InitialGameInfoMessage>, TaskCompletionSource<ClientLobbyJoinResponseMessage>, CancellationToken))state!;
-                initialInfoSource.TrySetCanceled(token);
-                responseSource.TrySetCanceled(token);
-            },
-            (initialInfoSource, responseSource, cancellationToken));
+        Action<ClientLobbyJoinResponseMessage> lobbyResponseHandler = response => lobbyResponseSource.TrySetResult(response);
+        Action<ClientLoadJoinResponseMessage> loadResponseHandler = response => loadResponseSource.TrySetResult(response);
+        Action<ClientRejoinResponseMessage> rejoinResponseHandler = response => rejoinResponseSource.TrySetResult(response);
+        using var cancellationRegistration = cancellationToken.Register(() =>
+        {
+            initialInfoSource.TrySetCanceled(cancellationToken);
+            lobbyResponseSource.TrySetCanceled(cancellationToken);
+            loadResponseSource.TrySetCanceled(cancellationToken);
+            rejoinResponseSource.TrySetCanceled(cancellationToken);
+        });
 
         inner.RegisterMessageHandler(initialInfoHandler);
-        inner.RegisterMessageHandler(responseHandler);
+        inner.RegisterMessageHandler(lobbyResponseHandler);
+        inner.RegisterMessageHandler(loadResponseHandler);
+        inner.RegisterMessageHandler(rejoinResponseHandler);
         try
         {
             log?.Invoke($"Broker client join flow: waiting for host initial game info clientId={settings.ClientId}.");
-            while (!initialInfoSource.Task.IsCompleted)
-            {
-                service.Update();
-                await Task.Delay(16, cancellationToken).ConfigureAwait(false);
-            }
-
-            var initialInfo = await initialInfoSource.Task.ConfigureAwait(false);
+            var initialInfo = await WaitForMessageAsync(service, initialInfoSource.Task, cancellationToken).ConfigureAwait(false);
             ThrowIfInitialGameInfoRejected(initialInfo);
 
-            log?.Invoke($"Broker client join flow: sending real lobby join request clientId={settings.ClientId}.");
-            service.SendMessage(createJoinRequest?.Invoke() ?? CreateJoinRequestFromCurrentSave(log));
-
-            while (!responseSource.Task.IsCompleted)
+            switch (initialInfo.sessionState)
             {
-                service.Update();
-                await Task.Delay(16, cancellationToken).ConfigureAwait(false);
+                case RunSessionState.InLobby:
+                {
+                    log?.Invoke($"Broker client join flow: sending real lobby join request clientId={settings.ClientId}.");
+                    service.SendMessage(createJoinRequest?.Invoke() ?? CreateJoinRequestFromCurrentSave(log));
+                    var response = await WaitForMessageAsync(service, lobbyResponseSource.Task, cancellationToken).ConfigureAwait(false);
+                    service.Update();
+                    BrokerPendingNetGameServiceRegistry.Store(settings.ClientId, service);
+                    log?.Invoke($"Broker client join flow: received host join response clientId={settings.ClientId}.");
+                    return new JoinResult
+                    {
+                        gameMode = initialInfo.gameMode,
+                        sessionState = initialInfo.sessionState,
+                        joinResponse = response
+                    };
+                }
+                case RunSessionState.InLoadedLobby:
+                {
+                    log?.Invoke($"Broker client join flow: sending loaded-run join request clientId={settings.ClientId}.");
+                    service.SendMessage(new ClientLoadJoinRequestMessage());
+                    var response = await WaitForMessageAsync(service, loadResponseSource.Task, cancellationToken).ConfigureAwait(false);
+                    service.Update();
+                    BrokerPendingNetGameServiceRegistry.Store(settings.ClientId, service);
+                    log?.Invoke($"Broker client join flow: received host loaded-run join response clientId={settings.ClientId}.");
+                    return new JoinResult
+                    {
+                        gameMode = initialInfo.gameMode,
+                        sessionState = initialInfo.sessionState,
+                        loadJoinResponse = response
+                    };
+                }
+                case RunSessionState.Running:
+                {
+                    log?.Invoke($"Broker client join flow: sending running-run rejoin request clientId={settings.ClientId}.");
+                    service.SendMessage(new ClientRejoinRequestMessage());
+                    var response = await WaitForMessageAsync(service, rejoinResponseSource.Task, cancellationToken).ConfigureAwait(false);
+                    service.Update();
+                    BrokerPendingNetGameServiceRegistry.Store(settings.ClientId, service);
+                    log?.Invoke($"Broker client join flow: received host rejoin response clientId={settings.ClientId}.");
+                    return new JoinResult
+                    {
+                        gameMode = initialInfo.gameMode,
+                        sessionState = initialInfo.sessionState,
+                        rejoinResponse = response
+                    };
+                }
+                default:
+                    throw new InvalidOperationException($"Broker client join flow received unsupported session state '{initialInfo.sessionState}'.");
             }
-
-            var response = await responseSource.Task.ConfigureAwait(false);
-            service.Update();
-            BrokerPendingNetGameServiceRegistry.Store(settings.ClientId, service);
-            log?.Invoke($"Broker client join flow: received host join response clientId={settings.ClientId}.");
-            return new JoinResult
-            {
-                gameMode = initialInfo.gameMode,
-                sessionState = initialInfo.sessionState,
-                joinResponse = response
-            };
         }
         catch
         {
@@ -142,8 +172,24 @@ public static class BrokerClientJoinFlow
         finally
         {
             inner.UnregisterMessageHandler(initialInfoHandler);
-            inner.UnregisterMessageHandler(responseHandler);
+            inner.UnregisterMessageHandler(lobbyResponseHandler);
+            inner.UnregisterMessageHandler(loadResponseHandler);
+            inner.UnregisterMessageHandler(rejoinResponseHandler);
         }
+    }
+
+    private static async Task<T> WaitForMessageAsync<T>(
+        BrokerNetGameService service,
+        Task<T> messageTask,
+        CancellationToken cancellationToken)
+    {
+        while (!messageTask.IsCompleted)
+        {
+            service.Update();
+            await Task.Delay(16, cancellationToken).ConfigureAwait(false);
+        }
+
+        return await messageTask.ConfigureAwait(false);
     }
 
     private static void ThrowIfInitialGameInfoRejected(InitialGameInfoMessage initialInfo)

@@ -12,6 +12,7 @@ public static class LocalCoopPatchInstaller
         typeof(BrokerJoinFriendScreenPatch),
         typeof(BrokerHostSteamStartupBypassPatch),
         typeof(BrokerHostENetStartupBypassPatch),
+        typeof(BrokerLocalPlayerIdPatch),
         typeof(BrokerLobbyServiceSubstitutionPatch),
         typeof(BrokerBeginRunPatch),
         typeof(BrokerPlayerDisplayNamePlatformPatch),

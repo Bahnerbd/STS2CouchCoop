@@ -18,7 +18,31 @@ public sealed class BrokerLobbyServiceSubstitutionTests
         Assert.AreEqual(
             BrokerClientRole.Client,
             BrokerLobbyServiceSubstitution.ResolveRoleForLifecycle("InitializeMultiplayerAsClient"));
+        Assert.AreEqual(
+            BrokerClientRole.Host,
+            BrokerLobbyServiceSubstitution.ResolveRoleForLifecycle("InitializeAsHost"));
+        Assert.AreEqual(
+            BrokerClientRole.Client,
+            BrokerLobbyServiceSubstitution.ResolveRoleForLifecycle("InitializeAsClient"));
         Assert.IsNull(BrokerLobbyServiceSubstitution.ResolveRoleForLifecycle("InitializeSinglePlayer"));
+    }
+
+    [TestMethod]
+    public void PatchTargetsCharacterSelectAndLoadedRunLifecycleScreens()
+    {
+        var targets = LocalCoop.Mod.Patches.BrokerLobbyServiceSubstitutionPatch.TargetMethods()
+            .Select(method => $"{method.DeclaringType?.FullName}.{method.Name}")
+            .OrderBy(name => name)
+            .ToArray();
+
+        CollectionAssert.Contains(targets, "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen.InitializeMultiplayerAsHost");
+        CollectionAssert.Contains(targets, "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen.InitializeMultiplayerAsClient");
+        CollectionAssert.Contains(targets, "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NMultiplayerLoadGameScreen.InitializeAsHost");
+        CollectionAssert.Contains(targets, "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NMultiplayerLoadGameScreen.InitializeAsClient");
+        CollectionAssert.Contains(targets, "MegaCrit.Sts2.Core.Nodes.Screens.DailyRun.NDailyRunLoadScreen.InitializeAsHost");
+        CollectionAssert.Contains(targets, "MegaCrit.Sts2.Core.Nodes.Screens.DailyRun.NDailyRunLoadScreen.InitializeAsClient");
+        CollectionAssert.Contains(targets, "MegaCrit.Sts2.Core.Nodes.Screens.CustomRun.NCustomRunLoadScreen.InitializeAsHost");
+        CollectionAssert.Contains(targets, "MegaCrit.Sts2.Core.Nodes.Screens.CustomRun.NCustomRunLoadScreen.InitializeAsClient");
     }
 
     [TestMethod]
