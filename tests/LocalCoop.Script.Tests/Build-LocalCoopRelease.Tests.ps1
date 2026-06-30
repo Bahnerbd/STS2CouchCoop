@@ -57,7 +57,7 @@ function Set-TestPublicReadme([string]$readmePath) {
 
 LocalCoop is an Experimental Alpha tested against Slay the Spire 2 v0.103.3 on Windows x64.
 
-Controller/mouse cross-play is not supported in this alpha.
+Controller/mouse cross-play is not supported in this alpha because STS2 does not split gameplay input between mouse and controller users.
 
 GitHub Issues and Pull Requests are strongly preferred.
 
@@ -86,6 +86,7 @@ try {
     $packageReadmePath = Join-Path $packageRoot 'README.md'
     Set-TestPublicManifest -manifestPath $packageManifestPath
     Set-TestPublicReadme -readmePath $packageReadmePath
+    Set-Content -LiteralPath (Join-Path $packageRoot 'KNOWN_ISSUES.md') -Value 'Known issues'
     Set-Content -LiteralPath (Join-Path $packageRoot 'LocalCoop.dll') -Value 'mod'
     Set-Content -LiteralPath (Join-Path $packageRoot 'LocalCoop.Protocol.dll') -Value 'protocol'
     Set-Content -LiteralPath (Join-Path $packageRoot 'broker\LocalCoop.Broker.Cli.exe') -Value 'broker'

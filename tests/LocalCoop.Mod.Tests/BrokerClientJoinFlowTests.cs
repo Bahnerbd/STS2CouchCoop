@@ -3,6 +3,8 @@ using MegaCrit.Sts2.Core.Entities.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
 using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Saves;
+using MegaCrit.Sts2.Core.Saves.Runs;
 using MegaCrit.Sts2.Core.Unlocks;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 using System.Threading.Channels;
@@ -79,6 +81,56 @@ public sealed class BrokerClientJoinFlowTests
         Assert.IsTrue(result.joinResponse.HasValue);
         Assert.AreEqual("HOSTSEED", result.joinResponse.Value.seed);
         Assert.AreEqual(0, result.joinResponse.Value.playersInLobby?.Count);
+        Assert.IsTrue(BrokerPendingNetGameServiceRegistry.TryTake(settings.ClientId, out var pending));
+        Assert.AreEqual(NetGameType.Client, pending!.Type);
+        pending.Dispose();
+    }
+
+    [TestMethod]
+    public async Task BeginStandardBrokerJoinSendsLoadJoinRequestAndReturnsLoadedRunResponse()
+    {
+        var settings = Settings(BrokerClientRole.Client);
+        var transport = new QueuedTransport();
+        var response = new ClientLoadJoinResponseMessage
+        {
+            serializableRun = MinimalSerializableRun(),
+            playersAlreadyConnected = [BrokerPlayerId.ForClientIndex(0)]
+        };
+        var initialInfo = ValidInitialGameInfo();
+        initialInfo.sessionState = RunSessionState.InLoadedLobby;
+
+        var joinTask = BrokerClientJoinFlow.BeginStandardBrokerJoinAsync(
+            settings,
+            () => transport,
+            _ => { },
+            CancellationToken.None,
+            () => BrokerClientJoinFlow.CreateJoinRequest(0, new SerializableUnlockState()));
+
+        await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            initialInfo,
+            sequence: 6));
+
+        await WaitForAsync(() => Task.FromResult(transport.Sent.Count == 1));
+        Assert.AreEqual(typeof(ClientLoadJoinRequestMessage).AssemblyQualifiedName, transport.Sent.Single().MessageType);
+
+        await transport.QueueEnvelopeAsync(BrokerEnvelopeMessageSerializer.ToEnvelope(
+            "local-test",
+            "client-0",
+            targetClientId: "client-1",
+            response,
+            sequence: 7));
+
+        var result = await joinTask.WaitAsync(TimeSpan.FromSeconds(1));
+
+        Assert.AreEqual(GameMode.Standard, result.gameMode);
+        Assert.AreEqual(RunSessionState.InLoadedLobby, result.sessionState);
+        Assert.IsFalse(result.joinResponse.HasValue);
+        Assert.IsTrue(result.loadJoinResponse.HasValue);
+        Assert.AreEqual(1, result.loadJoinResponse.Value.playersAlreadyConnected.Count);
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), result.loadJoinResponse.Value.playersAlreadyConnected.Single());
         Assert.IsTrue(BrokerPendingNetGameServiceRegistry.TryTake(settings.ClientId, out var pending));
         Assert.AreEqual(NetGameType.Client, pending!.Type);
         pending.Dispose();
@@ -231,9 +283,38 @@ public sealed class BrokerClientJoinFlowTests
         {
             version = "test",
             idDatabaseHash = 0,
+            gameplayAffectingMods = [],
+            otherMods = [],
             gameMode = GameMode.Standard,
             sessionState = RunSessionState.InLobby,
             connectionFailureReason = null
+        };
+    }
+
+    private static SerializableRun MinimalSerializableRun()
+    {
+        return new SerializableRun
+        {
+            SchemaVersion = 1,
+            Acts = [],
+            Modifiers = [],
+            EventsSeen = [],
+            GameMode = GameMode.Standard,
+            CurrentActIndex = 0,
+            SerializableOdds = new SerializableRunOddsSet(),
+            Players = [],
+            SerializableRng = new SerializableRunRngSet
+            {
+                Seed = "TESTSEED",
+                Counters = []
+            },
+            SerializableSharedRelicGrabBag = new SerializableRelicGrabBag
+            {
+                RelicIdLists = []
+            },
+            VisitedMapCoords = [],
+            MapPointHistory = [],
+            ExtraFields = new SerializableExtraRunFields()
         };
     }
 

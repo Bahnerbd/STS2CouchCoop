@@ -12,13 +12,13 @@ public sealed class BrokerBackedNetService
     private readonly BrokerClientRole? _role;
     private readonly Dictionary<string, List<Delegate>> _handlersByMessageType = new(StringComparer.Ordinal);
     private readonly List<BrokerEnvelope> _inboundQueue = [];
+    private readonly List<BrokerEnvelope> _bufferedInboundQueue = [];
     private readonly object _inboundGate = new();
     private readonly Dictionary<ulong, bool> _knownPeersById = [];
     private readonly object _knownPeerGate = new();
     private readonly List<BrokerClientRegistrationInfo> _pendingPeerRegistrations = [];
     private readonly object _pendingPeerRegistrationGate = new();
     private long _sequence;
-    private bool _bufferMessages;
 
     public BrokerBackedNetService(
         string sessionId,
@@ -57,6 +57,8 @@ public sealed class BrokerBackedNetService
     public bool IsConnected { get; private set; } = true;
 
     public bool IsGameLoading { get; private set; }
+
+    public bool IsBufferingMessages { get; private set; }
 
     public IReadOnlyList<ulong> ConnectedPeerIds
     {
@@ -163,11 +165,6 @@ public sealed class BrokerBackedNetService
             AddKnownPeer(BrokerPlayerId.ForClientIndex(peer.ClientIndex));
         }
 
-        if (_bufferMessages)
-        {
-            return;
-        }
-
         foreach (var envelope in DrainDispatchableInboundEnvelopes())
         {
             try
@@ -191,7 +188,16 @@ public sealed class BrokerBackedNetService
 
     public void SetBufferMessages(bool bufferMessages)
     {
-        _bufferMessages = bufferMessages;
+        lock (_inboundGate)
+        {
+            IsBufferingMessages = bufferMessages;
+            if (!bufferMessages && _bufferedInboundQueue.Count > 0)
+            {
+                _inboundQueue.InsertRange(0, _bufferedInboundQueue);
+                _bufferedInboundQueue.Clear();
+            }
+        }
+
         _log?.Invoke($"Broker message buffering changed: sessionId={_sessionId} client={_clientId} bufferMessages={bufferMessages}.");
     }
 
@@ -359,10 +365,17 @@ public sealed class BrokerBackedNetService
             foreach (var envelope in _inboundQueue)
             {
                 var routeKey = $"{envelope.SourceClientId}>{envelope.TargetClientId ?? "*"}";
-                if (blockedRoutes.Contains(routeKey) || !_handlersByMessageType.ContainsKey(envelope.MessageType))
+                if (blockedRoutes.Contains(routeKey) || !_handlersByMessageType.TryGetValue(envelope.MessageType, out var handlers))
                 {
                     remaining.Add(envelope);
                     blockedRoutes.Add(routeKey);
+                    continue;
+                }
+
+                if (ShouldBufferInboundEnvelope(envelope, handlers))
+                {
+                    _bufferedInboundQueue.Add(envelope);
+                    _log?.Invoke($"Broker inbound buffered: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}.");
                     continue;
                 }
 
@@ -372,6 +385,31 @@ public sealed class BrokerBackedNetService
             _inboundQueue.Clear();
             _inboundQueue.AddRange(remaining);
             return dispatchable.ToArray();
+        }
+    }
+
+    private bool ShouldBufferInboundEnvelope(BrokerEnvelope envelope, IReadOnlyList<Delegate> handlers)
+    {
+        if (!IsBufferingMessages || handlers.Count == 0)
+        {
+            return false;
+        }
+
+        var parameters = handlers[0].Method.GetParameters();
+        if (parameters.Length == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            var message = BrokerEnvelopeMessageSerializer.Deserialize(envelope, parameters[0].ParameterType);
+            return message is INetMessage { ShouldBuffer: true };
+        }
+        catch (Exception exception)
+        {
+            _log?.Invoke($"Broker inbound buffer check failed: sessionId={envelope.SessionId} source={envelope.SourceClientId} target={envelope.TargetClientId ?? "broadcast"} messageType={envelope.MessageType} sequence={envelope.Sequence}: {exception.GetType().Name}: {exception.Message}");
+            return false;
         }
     }
 

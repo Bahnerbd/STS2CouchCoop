@@ -99,6 +99,7 @@ function Assert-LocalCoopReleaseLayout {
         'LocalCoop.json',
         'LocalCoop.dll',
         'LocalCoop.Protocol.dll',
+        'KNOWN_ISSUES.md',
         'broker\LocalCoop.Broker.Cli.exe',
         'Start-LocalCoop2Players.bat',
         'Start-LocalCoop3Players.bat',
@@ -224,7 +225,7 @@ function Assert-LocalCoopReleasePublicReadiness {
     $requiredReadmeText = @(
         'Experimental Alpha',
         'Slay the Spire 2 v0.103.3',
-        'Controller/mouse cross-play is not supported',
+        'Controller/mouse cross-play is not supported in this alpha because STS2 does not split gameplay input between mouse and controller users',
         'GitHub Issues and Pull Requests are strongly preferred',
         'LocalCoop does not include or license Slay the Spire 2 assets or binaries'
     )
@@ -359,6 +360,7 @@ function Invoke-LocalCoopReleaseBuild {
     Copy-Item -LiteralPath (Join-Path $repoRoot 'Start-LocalCoop3Players.bat') -Destination $packageRoot -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'Start-LocalCoop4Players.bat') -Destination $packageRoot -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'README.md') -Destination $packageRoot -Force
+    Copy-Item -LiteralPath (Join-Path $repoRoot 'KNOWN_ISSUES.md') -Destination $packageRoot -Force
     Copy-Item -LiteralPath (Join-Path $repoRoot 'release\LocalCoop.json') -Destination (Join-Path $packageRoot 'LocalCoop.json') -Force
     Update-LocalCoopReleaseManifestVersion -ManifestPath (Join-Path $packageRoot 'LocalCoop.json') -Version $Version
 

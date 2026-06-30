@@ -305,7 +305,7 @@ public sealed class ControllerInputOwnershipTests
         Assert.IsTrue(ControllerInputOwnershipPatches.ShouldTrustSelectedSteamInputAtSinkForTesting(
             "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager",
             "_UnhandledInput",
-            new FakeInputEventAction("controller_face_button_north", device: 0),
+            new FakeInputEventAction("controller_left_stick_click", device: 0),
             BrokerControllerDeviceAssignment.ForDevice(1),
             selectedSteamInput: true));
         Assert.IsTrue(ControllerInputOwnershipPatches.ShouldTrustSelectedSteamInputAtSinkForTesting(

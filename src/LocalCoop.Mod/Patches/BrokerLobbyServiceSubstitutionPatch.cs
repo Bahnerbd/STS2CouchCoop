@@ -11,17 +11,40 @@ public static class BrokerLobbyServiceSubstitutionPatch
 
     public static IEnumerable<MethodBase> TargetMethods()
     {
-        var type = AccessTools.TypeByName("MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen");
-        if (type is null)
+        var targets = new[]
         {
-            yield break;
-        }
+            (
+                TypeName: "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen",
+                MethodNames: new[] { "InitializeMultiplayerAsHost", "InitializeMultiplayerAsClient" }
+            ),
+            (
+                TypeName: "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NMultiplayerLoadGameScreen",
+                MethodNames: new[] { "InitializeAsHost", "InitializeAsClient" }
+            ),
+            (
+                TypeName: "MegaCrit.Sts2.Core.Nodes.Screens.DailyRun.NDailyRunLoadScreen",
+                MethodNames: new[] { "InitializeAsHost", "InitializeAsClient" }
+            ),
+            (
+                TypeName: "MegaCrit.Sts2.Core.Nodes.Screens.CustomRun.NCustomRunLoadScreen",
+                MethodNames: new[] { "InitializeAsHost", "InitializeAsClient" }
+            )
+        };
 
-        foreach (var methodName in new[] { "InitializeMultiplayerAsHost", "InitializeMultiplayerAsClient" })
+        foreach (var target in targets)
         {
-            foreach (var method in AccessTools.GetDeclaredMethods(type).Where(method => method.Name == methodName))
+            var type = AccessTools.TypeByName(target.TypeName);
+            if (type is null)
             {
-                yield return method;
+                continue;
+            }
+
+            foreach (var methodName in target.MethodNames)
+            {
+                foreach (var method in AccessTools.GetDeclaredMethods(type).Where(method => method.Name == methodName))
+                {
+                    yield return method;
+                }
             }
         }
     }

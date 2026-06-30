@@ -12,21 +12,14 @@ public static class LocalCoopPatchInstaller
         typeof(BrokerJoinFriendScreenPatch),
         typeof(BrokerHostSteamStartupBypassPatch),
         typeof(BrokerHostENetStartupBypassPatch),
+        typeof(BrokerLocalPlayerIdPatch),
         typeof(BrokerLobbyServiceSubstitutionPatch),
         typeof(BrokerBeginRunPatch),
+        typeof(BrokerPlayerDisplayNamePlatformPatch),
+        typeof(BrokerPlayerDisplayNameNameplatePatch),
+        typeof(BaseLibHealthBarForecastCompatibilityPatch),
         typeof(SteamControllerInputSelectionPatches),
-        typeof(ControllerInputOwnershipPatches),
-        typeof(RunIdentityLaunchPatch),
-        typeof(RunIdentityDualRoleAdventureVoidGuardPatch),
-        typeof(RunIdentityDualRoleAdventureBoolGuardPatch),
-        typeof(RunIdentityLocalUiAlignmentPatch),
-        typeof(RunIdentityRewardAlignmentPatch),
-        typeof(RunIdentityPotionAnimationGuardPatch),
-        typeof(RunIdentityRelicInventoryVisualGuardPatch),
-        typeof(RunIdentityRemoteEventUiGuardPatch),
-        typeof(RunIdentityLocalActionGuardPatch),
-        typeof(RunIdentityRemoteMutationGuardPatch),
-        typeof(RunIdentityRemoteMutationTaskGuardPatch)
+        typeof(ControllerInputOwnershipPatches)
     ];
 
     private static readonly Type[] RunIdentityDiagnosticsPatchTypes =

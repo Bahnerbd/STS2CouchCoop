@@ -126,7 +126,7 @@ public sealed class BrokerNetServiceFactoryTests
     }
 
     [TestMethod]
-    public async Task BrokerNetGameServiceDispatchReassertsLocalContextForNativeHandlers()
+    public async Task BrokerNetGameServiceDispatchRestoresPreviousLocalContextAfterNativeHandlers()
     {
         var previousNetId = LocalContext.NetId;
         var inner = new BrokerBackedNetService(
@@ -152,7 +152,7 @@ public sealed class BrokerNetServiceFactoryTests
                 CancellationToken.None);
 
             Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), observedNetId);
-            Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), LocalContext.NetId);
+            Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), LocalContext.NetId);
         }
         finally
         {
@@ -322,6 +322,26 @@ public sealed class BrokerNetServiceFactoryTests
         var peer = service.ConnectedPeers.Single();
         Assert.AreEqual(BrokerPlayerId.ForClientIndex(1), peer.peerId);
         Assert.IsTrue(peer.readyForBroadcasting);
+    }
+
+    [TestMethod]
+    public void BrokerNetGameServiceAcceptsNativeMessageBufferToggle()
+    {
+        var logs = new List<string>();
+        var inner = new BrokerBackedNetService(
+            "local-test",
+            "client-0",
+            0,
+            new CapturingTransport(),
+            logs.Add);
+        using var service = new BrokerNetGameService(inner, NetGameType.Host);
+
+        service.SetBufferMessages(true);
+        service.SetBufferMessages(false);
+
+        Assert.IsFalse(inner.IsBufferingMessages);
+        Assert.IsTrue(logs.Any(message => message.Contains("bufferMessages=True", StringComparison.Ordinal)));
+        Assert.IsTrue(logs.Any(message => message.Contains("bufferMessages=False", StringComparison.Ordinal)));
     }
 
     private sealed class CapturingTransport : IBrokerEnvelopeTransport

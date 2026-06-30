@@ -50,6 +50,8 @@ public static class BrokerLobbyServiceSubstitution
         {
             "InitializeMultiplayerAsHost" => BrokerClientRole.Host,
             "InitializeMultiplayerAsClient" => BrokerClientRole.Client,
+            "InitializeAsHost" => BrokerClientRole.Host,
+            "InitializeAsClient" => BrokerClientRole.Client,
             _ => null
         };
     }
