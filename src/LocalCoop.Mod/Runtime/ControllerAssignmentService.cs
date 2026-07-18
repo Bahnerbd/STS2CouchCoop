@@ -7,7 +7,7 @@ public static class ControllerAssignmentService
         var playerSlot = config.PlayerSlot ?? config.ClientIndex;
         var controllerDevice = config.InputMode == BrokerClientInputMode.None
             ? BrokerControllerDeviceAssignment.None
-            : BrokerControllerDeviceAssignment.ForDevice(playerSlot);
+            : default;
 
         return new ControllerAssignment(playerSlot, config.InputMode, controllerDevice, config.ControllerClientCount);
     }

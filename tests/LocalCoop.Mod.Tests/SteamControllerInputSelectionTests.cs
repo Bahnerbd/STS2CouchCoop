@@ -166,6 +166,58 @@ public sealed class SteamControllerInputSelectionTests
     }
 
     [TestMethod]
+    public void NativeFallbackMapsPlayerSlotToSparseGodotJoypadDevice()
+    {
+        Godot.Input.ConnectedJoypads.Clear();
+        Godot.Input.ConnectedJoypads.AddRange([0, 3]);
+
+        var assignment = SteamControllerInputSelection.ResolveNativeFallbackAssignmentForTesting(
+            BrokerControllerDeviceAssignment.ForDevice(1),
+            controllerClientCount: 4);
+
+        Assert.AreEqual(3, assignment.Device);
+    }
+
+    [TestMethod]
+    public void NativeFallbackSuppressesUnconnectedDefaultPlayerSlots()
+    {
+        Godot.Input.ConnectedJoypads.Clear();
+        Godot.Input.ConnectedJoypads.AddRange([0, 3]);
+
+        var assignment = SteamControllerInputSelection.ResolveNativeFallbackAssignmentForTesting(
+            BrokerControllerDeviceAssignment.ForDevice(3),
+            controllerClientCount: 4);
+
+        Assert.IsTrue(assignment.IsConfigured);
+        Assert.IsNull(assignment.Device);
+    }
+
+    [TestMethod]
+    public void NativeFallbackKeepsConfiguredDeviceWhenGodotJoypadListIsEmpty()
+    {
+        Godot.Input.ConnectedJoypads.Clear();
+
+        var assignment = SteamControllerInputSelection.ResolveNativeFallbackAssignmentForTesting(
+            BrokerControllerDeviceAssignment.ForDevice(3),
+            controllerClientCount: 4);
+
+        Assert.AreEqual(3, assignment.Device);
+    }
+
+    [TestMethod]
+    public void NativeFallbackKeepsExplicitNativeDeviceOverrideOutsideControllerClientCount()
+    {
+        Godot.Input.ConnectedJoypads.Clear();
+        Godot.Input.ConnectedJoypads.AddRange([0, 3]);
+
+        var assignment = SteamControllerInputSelection.ResolveNativeFallbackAssignmentForTesting(
+            BrokerControllerDeviceAssignment.ForDevice(3),
+            controllerClientCount: 2);
+
+        Assert.AreEqual(3, assignment.Device);
+    }
+
+    [TestMethod]
     public void TracksSelectedControllerDevice()
     {
         SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
@@ -333,7 +385,7 @@ public sealed class SteamControllerInputSelectionTests
     }
 
     [TestMethod]
-    public void CreatesTranslatedUiInputEventForButtonRelease()
+    public void CreatesTranslatedUiSelectEventForSteamSouthButtonRelease()
     {
         var steamControllerRelease = new FakeInputEventAction("controller_face_button_south", device: 0, pressed: false);
 
@@ -345,6 +397,21 @@ public sealed class SteamControllerInputSelectionTests
         Assert.AreEqual("ui_select", companion.Action);
         Assert.AreEqual(0, companion.Device);
         Assert.IsFalse(companion.Pressed);
+    }
+
+    [TestMethod]
+    public void CreatesTranslatedUiAcceptEventForSteamNorthButton()
+    {
+        var steamControllerConfirm = new FakeInputEventAction("controller_face_button_north", device: 0, pressed: true);
+
+        Assert.IsTrue(SteamControllerInputSelection.TryCreateUiCompanionInputEvent(
+            steamControllerConfirm,
+            out var uiCompanionInputEvent));
+
+        var companion = (FakeInputEventAction)uiCompanionInputEvent!;
+        Assert.AreEqual("ui_accept", companion.Action);
+        Assert.AreEqual(0, companion.Device);
+        Assert.IsTrue(companion.Pressed);
     }
 
     [TestMethod]
@@ -393,6 +460,40 @@ public sealed class SteamControllerInputSelectionTests
         var map = SteamControllerInputSelection.CreateNativeGeneratedActionMapForTesting(config);
 
         Assert.AreEqual("mega_view_map", map["controller_ps4_touchpad"]);
+    }
+
+    [TestMethod]
+    public void UsesCurrentSts2ControllerSchemeForMappedTargets()
+    {
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        SteamControllerInputSelection.SetNativeGeneratedActionMapForTesting(
+            new Dictionary<string, string>
+            {
+                ["controller_face_button_west"] = "mega_top_panel",
+                ["controller_left_trigger"] = "mega_view_draw_pile",
+                ["controller_right_trigger"] = "mega_view_discard_pile",
+                ["controller_left_bumper"] = "mega_view_deck_and_tab_left",
+                ["controller_right_bumper"] = "mega_view_exhaust_pile_and_tab_right",
+                ["controller_select_button"] = "mega_view_map",
+                ["ui_controller_touch_pad"] = "mega_view_map",
+                ["controller_start_button"] = "mega_pause_and_back",
+                ["controller_joystick_press"] = "mega_peek"
+            });
+
+        Assert.AreEqual("ui_accept", SteamControllerInputSelection.GetMappedTargetAction(
+            new FakeInputEventAction("controller_face_button_north", device: 0)));
+        Assert.AreEqual("ui_select", SteamControllerInputSelection.GetMappedTargetAction(
+            new FakeInputEventAction("controller_face_button_south", device: 0)));
+        Assert.AreEqual("ui_cancel", SteamControllerInputSelection.GetMappedTargetAction(
+            new FakeInputEventAction("controller_face_button_east", device: 0)));
+        Assert.AreEqual("mega_top_panel", SteamControllerInputSelection.GetMappedTargetAction(
+            new FakeInputEventAction("controller_face_button_west", device: 0)));
+        Assert.AreEqual("mega_view_map", SteamControllerInputSelection.GetMappedTargetAction(
+            new FakeInputEventAction("controller_select_button", device: 0)));
+        Assert.AreEqual("mega_view_map", SteamControllerInputSelection.GetMappedTargetAction(
+            new FakeInputEventAction("ui_controller_touch_pad", device: 0)));
+        Assert.AreEqual("mega_peek", SteamControllerInputSelection.GetMappedTargetAction(
+            new FakeInputEventAction("controller_joystick_press", device: 0)));
     }
 
     [TestMethod]
@@ -460,6 +561,9 @@ public sealed class SteamControllerInputSelectionTests
     [DataRow("controller_left_bumper", "mega_view_deck_and_tab_left")]
     [DataRow("controller_right_bumper", "mega_view_exhaust_pile_and_tab_right")]
     [DataRow("controller_start_button", "mega_pause_and_back")]
+    [DataRow("controller_select_button", "mega_view_map")]
+    [DataRow("ui_controller_touch_pad", "mega_view_map")]
+    [DataRow("controller_joystick_press", "mega_peek")]
     public void FallsBackToObservedXboxNativeActionAliasesWhenConfigMapIsUnavailable(
         string sourceAction,
         string nativeAction)
@@ -491,6 +595,238 @@ public sealed class SteamControllerInputSelectionTests
             new FakeInputEventJoypadMotion(device: 0, axis: 0)));
     }
 
+    [TestMethod]
+    public void NativeFallbackTrustsGeneratedActionAfterAssignedJoypadButton()
+    {
+        var now = new DateTimeOffset(2026, 7, 17, 14, 41, 6, TimeSpan.Zero);
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+
+        SteamControllerInputSelection.RegisterNativeFallbackSourceInput(
+            new FakeInputEventJoypadButton(device: 3),
+            new BrokerControllerDeviceAssignment(IsConfigured: true, Device: 3),
+            now);
+
+        Assert.IsTrue(SteamControllerInputSelection.TryConsumeNativeFallbackGeneratedInput(
+            new FakeInputEventAction("ui_down", device: 0),
+            new BrokerControllerDeviceAssignment(IsConfigured: true, Device: 3),
+            now.AddMilliseconds(10)));
+    }
+
+    [TestMethod]
+    public void NativeFallbackTrustsGeneratedActionReleaseAfterAssignedJoypadButtonRelease()
+    {
+        var now = new DateTimeOffset(2026, 7, 17, 14, 41, 6, TimeSpan.Zero);
+        var assignment = new BrokerControllerDeviceAssignment(IsConfigured: true, Device: 3);
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+
+        SteamControllerInputSelection.RegisterNativeFallbackSourceInput(
+            new FakeInputEventJoypadButton(device: 3, pressed: true),
+            assignment,
+            now);
+        SteamControllerInputSelection.RegisterNativeFallbackSourceInput(
+            new FakeInputEventJoypadButton(device: 3, pressed: false),
+            assignment,
+            now.AddMilliseconds(20));
+
+        Assert.IsTrue(SteamControllerInputSelection.TryConsumeNativeFallbackGeneratedInput(
+            new FakeInputEventAction("ui_select", device: 0, pressed: true),
+            assignment,
+            now.AddMilliseconds(30)));
+        Assert.IsTrue(SteamControllerInputSelection.TryConsumeNativeFallbackGeneratedInput(
+            new FakeInputEventAction("ui_select", device: 0, pressed: false),
+            assignment,
+            now.AddMilliseconds(40)));
+    }
+
+    [TestMethod]
+    public void NativeFallbackDoesNotTrustGeneratedActionWithoutAssignedJoypadButton()
+    {
+        var now = new DateTimeOffset(2026, 7, 17, 14, 41, 6, TimeSpan.Zero);
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+
+        SteamControllerInputSelection.RegisterNativeFallbackSourceInput(
+            new FakeInputEventJoypadButton(device: 0),
+            new BrokerControllerDeviceAssignment(IsConfigured: true, Device: 3),
+            now);
+
+        Assert.IsFalse(SteamControllerInputSelection.TryConsumeNativeFallbackGeneratedInput(
+            new FakeInputEventAction("ui_down", device: 0),
+            new BrokerControllerDeviceAssignment(IsConfigured: true, Device: 3),
+            now.AddMilliseconds(10)));
+    }
+
+    [TestMethod]
+    public void RefreshSelectedInputStateForFrameRunsSteamInputFrameAndReactivatesCurrentActionSet()
+    {
+        Steamworks.SteamInput.Reset();
+        var strategy = new FakeSteamInputStrategy
+        {
+            _currentControllerHandle = new Steamworks.InputHandle_t(5733059612895879),
+            _currentActionSetHandle = new Steamworks.InputActionSetHandle_t(77)
+        };
+
+        Assert.IsTrue(SteamControllerInputSelection.RefreshSelectedInputStateForFrame(strategy));
+
+        Assert.AreEqual(1, Steamworks.SteamInput.RunFrameCalls);
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                (new Steamworks.InputHandle_t(5733059612895879), new Steamworks.InputActionSetHandle_t(77))
+            },
+            Steamworks.SteamInput.ActivatedActionSets.ToArray());
+    }
+
+    [TestMethod]
+    public void RefreshSelectedInputStateForFrameResolvesControlsActionSetWhenMissing()
+    {
+        Steamworks.SteamInput.Reset();
+        Steamworks.SteamInput.ControlsActionSet = new Steamworks.InputActionSetHandle_t(91);
+        var strategy = new FakeSteamInputStrategy
+        {
+            _currentControllerHandle = new Steamworks.InputHandle_t(10237214364789383)
+        };
+
+        Assert.IsTrue(SteamControllerInputSelection.RefreshSelectedInputStateForFrame(strategy));
+
+        Assert.AreEqual(new Steamworks.InputActionSetHandle_t(91), strategy._currentActionSetHandle);
+        CollectionAssert.AreEqual(
+            new[]
+            {
+                (new Steamworks.InputHandle_t(10237214364789383), new Steamworks.InputActionSetHandle_t(91))
+            },
+            Steamworks.SteamInput.ActivatedActionSets.ToArray());
+    }
+
+    [TestMethod]
+    public void ApplySelectionRunsSteamInputFrameBeforeControllerDiscovery()
+    {
+        Steamworks.SteamInput.Reset();
+        Steamworks.SteamInput.ConnectedControllers.Add(new Steamworks.InputHandle_t(5733059612895879));
+        var strategy = new FakeSteamInputStrategy();
+        var logs = new List<string>();
+
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        SteamControllerInputSelection.ApplySelection(
+            strategy,
+            BrokerControllerDeviceAssignment.ForDevice(0),
+            controllerClientCount: 4,
+            claimScope: Guid.NewGuid().ToString("N"),
+            clientIndex: 0,
+            logs.Add);
+
+        Assert.AreEqual(1, Steamworks.SteamInput.RunFrameCalls);
+        Assert.AreEqual(1, Steamworks.SteamInput.GetConnectedControllersCalls);
+        Assert.AreEqual(new Steamworks.InputHandle_t(5733059612895879), strategy._currentControllerHandle);
+        Assert.IsTrue(SteamControllerInputSelection.IsSelectedControllerActive(
+            BrokerControllerDeviceAssignment.ForDevice(0)));
+        StringAssert.Contains(logs.Single(), "selected playerSlot=0");
+    }
+
+    [TestMethod]
+    public void ApplySelectionFallsBackWhenSteamHandleHasNoBoundActionOrigins()
+    {
+        Steamworks.SteamInput.Reset();
+        Steamworks.SteamInput.DefaultDigitalActionOriginCount = 0;
+        var silentHandle = new Steamworks.InputHandle_t(14740258867636871);
+        Steamworks.SteamInput.ConnectedControllers.Add(silentHandle);
+        var strategy = new FakeSteamInputStrategy();
+        var logs = new List<string>();
+
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        SteamControllerInputSelection.ApplySelection(
+            strategy,
+            BrokerControllerDeviceAssignment.ForDevice(0),
+            controllerClientCount: 4,
+            claimScope: Guid.NewGuid().ToString("N"),
+            clientIndex: 0,
+            logs.Add);
+
+        Assert.IsNull(strategy._currentControllerHandle);
+        Assert.IsFalse(SteamControllerInputSelection.IsSelectedControllerActive(
+            BrokerControllerDeviceAssignment.ForDevice(0)));
+        StringAssert.Contains(logs.Single(), "unusable");
+        StringAssert.Contains(logs.Single(), "no bound action origins");
+    }
+
+    [TestMethod]
+    public void ApplySelectionFallsBackWhileSteamBindingIsStillLoading()
+    {
+        Steamworks.SteamInput.Reset();
+        Steamworks.SteamInput.DeviceBindingRevisionLoaded = false;
+        Steamworks.SteamInput.DefaultDigitalActionOriginCount = 0;
+        var loadingHandle = new Steamworks.InputHandle_t(5733614737418887);
+        Steamworks.SteamInput.ConnectedControllers.Add(loadingHandle);
+        var strategy = new FakeSteamInputStrategy();
+        var logs = new List<string>();
+
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        SteamControllerInputSelection.ApplySelection(
+            strategy,
+            BrokerControllerDeviceAssignment.ForDevice(0),
+            controllerClientCount: 4,
+            claimScope: Guid.NewGuid().ToString("N"),
+            clientIndex: 0,
+            logs.Add);
+
+        Assert.IsNull(strategy._currentControllerHandle);
+        Assert.IsFalse(SteamControllerInputSelection.IsSelectedControllerActive(
+            BrokerControllerDeviceAssignment.ForDevice(0)));
+        StringAssert.Contains(logs.Single(), "pending");
+        StringAssert.Contains(logs.Single(), "binding configuration is still loading");
+    }
+
+    [TestMethod]
+    public void ApplySelectionUsesAvailableOriginsWhenBindingRevisionIsUnavailable()
+    {
+        Steamworks.SteamInput.Reset();
+        Steamworks.SteamInput.DeviceBindingRevisionLoaded = false;
+        var handle = new Steamworks.InputHandle_t(5733614737418887);
+        Steamworks.SteamInput.ConnectedControllers.Add(handle);
+        var strategy = new FakeSteamInputStrategy();
+        var logs = new List<string>();
+
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        SteamControllerInputSelection.ApplySelection(
+            strategy,
+            BrokerControllerDeviceAssignment.ForDevice(0),
+            controllerClientCount: 4,
+            claimScope: Guid.NewGuid().ToString("N"),
+            clientIndex: 0,
+            logs.Add);
+
+        Assert.AreEqual(handle, strategy._currentControllerHandle);
+        Assert.IsTrue(SteamControllerInputSelection.IsSelectedControllerActive(
+            BrokerControllerDeviceAssignment.ForDevice(0)));
+        StringAssert.Contains(logs.Single(), "selected playerSlot=0");
+    }
+
+    [TestMethod]
+    public void ApplySelectionAcceptsUnknownSteamInputTypeWhenActionBindingsAreUsable()
+    {
+        Steamworks.SteamInput.Reset();
+        var unknownHandle = new Steamworks.InputHandle_t(250791071447356);
+        Steamworks.SteamInput.ConnectedControllers.Add(unknownHandle);
+        Steamworks.SteamInput.InputTypesByHandle[unknownHandle] =
+            Steamworks.ESteamInputType.k_ESteamInputType_Unknown;
+        var strategy = new FakeSteamInputStrategy();
+        var logs = new List<string>();
+
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        SteamControllerInputSelection.ApplySelection(
+            strategy,
+            BrokerControllerDeviceAssignment.ForDevice(0),
+            controllerClientCount: 4,
+            claimScope: Guid.NewGuid().ToString("N"),
+            clientIndex: 0,
+            logs.Add);
+
+        Assert.AreEqual(unknownHandle, strategy._currentControllerHandle);
+        Assert.IsTrue(SteamControllerInputSelection.IsSelectedControllerActive(
+            BrokerControllerDeviceAssignment.ForDevice(0)));
+        StringAssert.Contains(logs.Single(), "selected playerSlot=0");
+        StringAssert.Contains(logs.Single(), "inputType=k_ESteamInputType_Unknown");
+    }
+
     private sealed class FakeInputEventAction(string action, int device, bool pressed = true)
     {
         public string Action { get; set; } = action;
@@ -509,11 +845,23 @@ public sealed class SteamControllerInputSelectionTests
         public int Axis { get; } = axis;
     }
 
+    private sealed class FakeInputEventJoypadButton(int device, bool pressed = true)
+    {
+        public int Device { get; } = device;
+        public bool Pressed { get; } = pressed;
+    }
+
     private sealed class FakeControllerConfig(
         Dictionary<string, string> steamInputControllerMap,
         Dictionary<string, string> defaultControllerInputMap)
     {
         public Dictionary<string, string> SteamInputControllerMap { get; } = steamInputControllerMap;
         public Dictionary<string, string> DefaultControllerInputMap { get; } = defaultControllerInputMap;
+    }
+
+    private sealed class FakeSteamInputStrategy
+    {
+        public Steamworks.InputHandle_t? _currentControllerHandle;
+        public Steamworks.InputActionSetHandle_t? _currentActionSetHandle;
     }
 }

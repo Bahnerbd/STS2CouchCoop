@@ -98,6 +98,28 @@ function Test-LocalCoopPackagedInstall {
     Test-Path -LiteralPath (Join-Path $RepoRoot 'broker\LocalCoop.Broker.Cli.exe') -PathType Leaf
 }
 
+function Resolve-LocalCoopBrokerRepoRoot {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$RepoRoot
+    )
+
+    $resolvedRepoRoot = (Resolve-Path -LiteralPath $RepoRoot).Path
+    if (-not (Test-LocalCoopPackagedInstall -RepoRoot $resolvedRepoRoot)) {
+        return $resolvedRepoRoot
+    }
+
+    $gameRoot = Resolve-LocalCoopDefaultGameRoot -RepoRoot $resolvedRepoRoot
+    $developmentRepoRoot = Join-Path $gameRoot 'STS2CouchCoop'
+    $brokerProject = Join-Path $developmentRepoRoot 'src\LocalCoop.Broker.Cli\LocalCoop.Broker.Cli.csproj'
+    if (Test-Path -LiteralPath $brokerProject -PathType Leaf) {
+        return (Resolve-Path -LiteralPath $developmentRepoRoot).Path
+    }
+
+    $resolvedRepoRoot
+}
+
 function Resolve-LocalCoopDefaultGameRoot {
     [CmdletBinding()]
     param(
@@ -336,29 +358,32 @@ function Write-LocalCoopBrokerLauncherScript {
     New-Item -ItemType Directory -Path $runtimeRoot -Force | Out-Null
 
     $launcherPath = Join-Path $runtimeRoot ("start-broker-{0}-{1}.ps1" -f $sessionToken, $Port)
-    $logPath = Join-Path $runtimeRoot ("broker-{0}-{1}.log" -f $sessionToken, $Port)
+    $logPath = Join-Path $RepoRoot 'broker.log'
     $arguments = Format-LocalCoopBrokerArgumentList -RepoRoot $RepoRoot -SessionId $SessionId -Port $Port
 
     $content = @(
         'Set-StrictMode -Version Latest'
         '$ErrorActionPreference = ''Stop'''
         ('Set-Location -LiteralPath {0}' -f (ConvertTo-LocalCoopPowerShellSingleQuoted -Value $RepoRoot))
+        ('$env:LOCALCOOP_BROKER_LOG = {0}' -f (ConvertTo-LocalCoopPowerShellSingleQuoted -Value $logPath))
     )
 
     if ($arguments[0].EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) {
         $brokerExecutable = ConvertTo-LocalCoopPowerShellSingleQuoted -Value $arguments[0]
-        $quotedBrokerArguments = ($arguments[1..($arguments.Count - 1)] | ForEach-Object { ConvertTo-LocalCoopPowerShellSingleQuoted -Value $_ }) -join ', '
+        $brokerInvocationArguments = @($arguments[1..($arguments.Count - 1)]) + @($logPath)
+        $quotedBrokerArguments = ($brokerInvocationArguments | ForEach-Object { ConvertTo-LocalCoopPowerShellSingleQuoted -Value $_ }) -join ', '
         $content += @(
             ('$brokerExecutable = {0}' -f $brokerExecutable)
             ('$brokerArguments = @({0})' -f $quotedBrokerArguments)
-            ('& $brokerExecutable @brokerArguments *> {0}' -f (ConvertTo-LocalCoopPowerShellSingleQuoted -Value $logPath))
+            '& $brokerExecutable @brokerArguments'
         )
     }
     else {
-        $quotedArguments = ($arguments | ForEach-Object { ConvertTo-LocalCoopPowerShellSingleQuoted -Value $_ }) -join ', '
+        $brokerInvocationArguments = @($arguments) + @($logPath)
+        $quotedArguments = ($brokerInvocationArguments | ForEach-Object { ConvertTo-LocalCoopPowerShellSingleQuoted -Value $_ }) -join ', '
         $content += @(
             ('$brokerArguments = @({0})' -f $quotedArguments)
-            ('& dotnet @brokerArguments *> {0}' -f (ConvertTo-LocalCoopPowerShellSingleQuoted -Value $logPath))
+            '& dotnet @brokerArguments'
         )
     }
 
@@ -547,11 +572,16 @@ function Start-LocalCoopBrokerProcess {
         [int]$Port
     )
 
-    if (-not (Test-LocalCoopPackagedInstall -RepoRoot $RepoRoot)) {
-        Invoke-LocalCoopBrokerBuild -RepoRoot $RepoRoot
+    $brokerRepoRoot = Resolve-LocalCoopBrokerRepoRoot -RepoRoot $RepoRoot
+    if (-not (Test-LocalCoopPackagedInstall -RepoRoot $brokerRepoRoot)) {
+        if ($brokerRepoRoot -ne (Resolve-Path -LiteralPath $RepoRoot).Path) {
+            Write-Host ("Using LocalCoop development broker from {0}." -f $brokerRepoRoot)
+        }
+
+        Invoke-LocalCoopBrokerBuild -RepoRoot $brokerRepoRoot
     }
 
-    $startInfo = New-LocalCoopBrokerStartInfo -RepoRoot $RepoRoot -SessionId $SessionId -Port $Port
+    $startInfo = New-LocalCoopBrokerStartInfo -RepoRoot $brokerRepoRoot -SessionId $SessionId -Port $Port
     $process = [System.Diagnostics.Process]::new()
     $process.StartInfo = $startInfo
     if (-not $process.Start()) {
@@ -981,6 +1011,27 @@ namespace LocalCoop
         public static extern bool ShowWindow(IntPtr hWnd, int command);
 
         [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool SetForegroundWindow(IntPtr hWnd);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetForegroundWindow();
+
+        [DllImport("user32.dll")]
+        public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint processId);
+
+        [DllImport("kernel32.dll")]
+        public static extern uint GetCurrentThreadId();
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool AttachThreadInput(uint sourceThreadId, uint targetThreadId, bool attach);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern bool BringWindowToTop(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
+        public static extern IntPtr SetFocus(IntPtr hWnd);
+
+        [DllImport("user32.dll", SetLastError = true)]
         public static extern bool SetProcessDpiAwarenessContext(IntPtr dpiContext);
 
         [DllImport("user32.dll", SetLastError = true)]
@@ -994,6 +1045,49 @@ namespace LocalCoop
 
         [DllImport("dwmapi.dll", PreserveSig = true)]
         public static extern int DwmGetWindowAttribute(IntPtr hWnd, int attribute, out RECT rect, int attributeSize);
+
+        public static bool ForceForegroundWindow(IntPtr hWnd)
+        {
+            if (hWnd == IntPtr.Zero)
+            {
+                return false;
+            }
+
+            var currentThreadId = GetCurrentThreadId();
+            uint ignoredProcessId;
+            var targetThreadId = GetWindowThreadProcessId(hWnd, out ignoredProcessId);
+            var foregroundWindow = GetForegroundWindow();
+            var foregroundThreadId = foregroundWindow == IntPtr.Zero
+                ? 0
+                : GetWindowThreadProcessId(foregroundWindow, out ignoredProcessId);
+            var attachedToTarget = targetThreadId != 0 && targetThreadId != currentThreadId
+                && AttachThreadInput(currentThreadId, targetThreadId, true);
+            var attachedToForeground = foregroundThreadId != 0
+                && foregroundThreadId != currentThreadId
+                && foregroundThreadId != targetThreadId
+                && AttachThreadInput(currentThreadId, foregroundThreadId, true);
+
+            try
+            {
+                ShowWindow(hWnd, 9);
+                BringWindowToTop(hWnd);
+                SetForegroundWindow(hWnd);
+                SetFocus(hWnd);
+                return GetForegroundWindow() == hWnd;
+            }
+            finally
+            {
+                if (attachedToForeground)
+                {
+                    AttachThreadInput(currentThreadId, foregroundThreadId, false);
+                }
+
+                if (attachedToTarget)
+                {
+                    AttachThreadInput(currentThreadId, targetThreadId, false);
+                }
+            }
+        }
 
         [StructLayout(LayoutKind.Sequential)]
         public struct RECT
@@ -1296,6 +1390,58 @@ function Invoke-LocalCoopClientWindowPlacementStabilization {
     }
 }
 
+function Invoke-LocalCoopSteamInputBootstrapFocus {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory = $true)]
+        [object[]]$ClientLaunches,
+        [Parameter(Mandatory = $true)]
+        [int]$TimeoutSeconds,
+        [int]$HoldMilliseconds = 5000,
+        [scriptblock]$ResolveWindowHandle = {
+            param($process, $timeoutSeconds)
+            Wait-LocalCoopMainWindowHandle -Process $process -TimeoutSeconds $timeoutSeconds
+        },
+        [scriptblock]$ActivateWindow = {
+            param($windowHandle)
+            Initialize-LocalCoopWin32WindowApi
+            [LocalCoop.WindowPlacementWin32]::ForceForegroundWindow($windowHandle)
+        },
+        [scriptblock]$SleepMilliseconds = {
+            param($milliseconds)
+            Start-Sleep -Milliseconds $milliseconds
+        }
+    )
+
+    if ($HoldMilliseconds -lt 0) {
+        throw 'Steam Input bootstrap hold must be zero or greater.'
+    }
+
+    $hostLaunch = $ClientLaunches | Where-Object ClientIndex -eq 0 | Select-Object -First 1
+    if ($null -eq $hostLaunch) {
+        Write-Warning 'Could not bootstrap Steam Input because client 0 was not launched.'
+        return $false
+    }
+
+    $windowHandle = & $ResolveWindowHandle $hostLaunch.Process $TimeoutSeconds
+    if ($windowHandle -eq [IntPtr]::Zero) {
+        Write-Warning 'Could not bootstrap Steam Input because the client 0 window was unavailable.'
+        return $false
+    }
+
+    if (-not (& $ActivateWindow $windowHandle)) {
+        Write-Warning 'Windows declined the client 0 foreground request; Steam Input may initialize after client 0 is focused manually.'
+        return $false
+    }
+
+    Write-Host ("Focused STS2 client 0 for Steam Input discovery ({0} ms)." -f $HoldMilliseconds)
+    if ($HoldMilliseconds -gt 0) {
+        & $SleepMilliseconds $HoldMilliseconds
+    }
+
+    return $true
+}
+
 function Set-LocalCoopClientWindowPlacement {
     [CmdletBinding()]
     param(
@@ -1480,7 +1626,7 @@ function Write-LocalCoopControllerAssignmentDiagnostics {
             continue
         }
 
-        Write-Host ("Controller assignment: client={0} playerSlot={1} inputMode=auto resolvedController=runtime SteamHandle=runtime SteamInputType=runtime XInputSlot=runtime GodotJoyId=runtime fallback=SteamInput,XInput,Godot" -f $clientIndex, $device)
+        Write-Host ("Controller assignment: client={0} playerSlot={0} inputMode=auto resolvedController=runtime SteamHandle=runtime SteamInputType=runtime XInputSlot=runtime GodotJoyId=runtime fallback=SteamInput,XInput,Godot" -f $clientIndex)
     }
 }
 
@@ -1514,12 +1660,7 @@ function Format-LocalCoopClientBrokerConfig {
     }
 
     $role = if ($ClientIndex -eq 0) { 'host' } else { 'client' }
-    $playerSlot = if ([string]::Equals($ControllerDevice, 'none', [StringComparison]::OrdinalIgnoreCase)) {
-        $ClientIndex.ToString()
-    }
-    else {
-        $ControllerDevice
-    }
+    $playerSlot = $ClientIndex.ToString()
     $inputMode = if ([string]::Equals($ControllerDevice, 'none', [StringComparison]::OrdinalIgnoreCase)) {
         'none'
     }
@@ -1533,7 +1674,6 @@ function Format-LocalCoopClientBrokerConfig {
         "playerSlot=$playerSlot"
         "inputMode=$inputMode"
         "controllerClientCount=$ControllerClientCount"
-        "controllerDevice=$ControllerDevice"
         "endpoint=$($HostName):$Port"
         "sessionId=$SessionId"
         ''
@@ -1995,6 +2135,10 @@ function Invoke-LocalCoopClientStartup {
                 -InitialDelayMilliseconds ($WindowPlacementStartupDelaySeconds * 1000) `
                 -StabilizationSeconds $WindowPlacementStabilizationSeconds `
                 -RetryIntervalMilliseconds $WindowPlacementRetryIntervalMilliseconds
+
+            [void](Invoke-LocalCoopSteamInputBootstrapFocus `
+                -ClientLaunches $clientLaunches `
+                -TimeoutSeconds $WindowPlacementTimeoutSeconds)
         }
         catch {
             Write-Warning ("Could not place LocalCoop client windows: {0}" -f $_.Exception.Message)

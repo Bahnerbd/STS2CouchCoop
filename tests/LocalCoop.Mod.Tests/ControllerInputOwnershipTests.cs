@@ -437,7 +437,7 @@ public sealed class ControllerInputOwnershipTests
             new FakeJoypadButton(device: 3),
             BrokerControllerDeviceAssignment.ForDevice(3),
             selectedControllerActive: true));
-        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldSuppressNativeControllerInputForSelectedSteamControllerForTesting(
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldSuppressNativeControllerInputForSelectedSteamControllerForTesting(
             "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen",
             "_Input",
             new FakeJoypadButton(device: 3),
@@ -478,6 +478,29 @@ public sealed class ControllerInputOwnershipTests
             new FakeInputEventJoypadMotion(device: 3)));
         Assert.IsFalse(ControllerInputOwnershipPatches.ShouldLogSuppressedControllerInputForTesting(
             new FakeInputEventAction("controller_face_button_south", device: 0, pressed: false)));
+    }
+
+    [TestMethod]
+    public void NativeJoypadInputAtRealSinkRetriesSteamSelectionWhenNoControllerIsSelected()
+    {
+        Assert.IsTrue(ControllerInputOwnershipPatches.ShouldRetrySteamSelectionFromInputBoundaryForTesting(
+            "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen",
+            "_Input",
+            new FakeJoypadButton(device: 2),
+            BrokerControllerDeviceAssignment.ForDevice(2),
+            selectedControllerActive: false));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldRetrySteamSelectionFromInputBoundaryForTesting(
+            "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen",
+            "_Input",
+            new FakeInputEventAction("controller_d_pad_south", device: 0),
+            BrokerControllerDeviceAssignment.ForDevice(2),
+            selectedControllerActive: false));
+        Assert.IsFalse(ControllerInputOwnershipPatches.ShouldRetrySteamSelectionFromInputBoundaryForTesting(
+            "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen",
+            "_Input",
+            new FakeJoypadButton(device: 2),
+            BrokerControllerDeviceAssignment.ForDevice(2),
+            selectedControllerActive: true));
     }
 
     [TestMethod]

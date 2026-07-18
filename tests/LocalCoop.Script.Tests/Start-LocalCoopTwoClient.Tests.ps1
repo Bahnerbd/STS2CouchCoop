@@ -108,6 +108,14 @@ try {
 
     Assert-Equal (Resolve-LocalCoopDefaultGameRoot -RepoRoot $fakePackageRoot) $fakeGameRoot 'Packaged install should resolve the game root from mods\LocalCoop.'
     Assert-Equal (Resolve-LocalCoopDefaultGameRoot -RepoRoot $repoRoot) (Resolve-Path (Join-Path $repoRoot '..')).Path 'Dev checkout should resolve the game root from the repo parent.'
+    Assert-Equal (Resolve-LocalCoopBrokerRepoRoot -RepoRoot $fakePackageRoot) $fakePackageRoot 'Packaged install without a source checkout should use its bundled broker.'
+
+    $fakeDevelopmentRepo = Join-Path $fakeGameRoot 'STS2CouchCoop'
+    $fakeDevelopmentBrokerProject = Join-Path $fakeDevelopmentRepo 'src\LocalCoop.Broker.Cli\LocalCoop.Broker.Cli.csproj'
+    New-Item -ItemType Directory -Path (Split-Path -Parent $fakeDevelopmentBrokerProject) -Force | Out-Null
+    Set-Content -LiteralPath $fakeDevelopmentBrokerProject -Value '<Project />'
+    Assert-Equal (Resolve-LocalCoopBrokerRepoRoot -RepoRoot $fakePackageRoot) $fakeDevelopmentRepo 'Packaged development install should use the adjacent source broker.'
+    Assert-Equal (Resolve-LocalCoopBrokerRepoRoot -RepoRoot $repoRoot) (Resolve-Path -LiteralPath $repoRoot).Path 'Dev checkout should continue using its own broker source.'
 
     $steamAppIdPath = Join-Path $fakeGameRoot 'steam_appid.txt'
     Assert-True (-not (Test-Path -LiteralPath $steamAppIdPath)) 'Fake target game root should start without steam_appid.txt.'
@@ -150,7 +158,7 @@ try {
         Assert-True ($portableClientConfig.Contains('playerSlot=1')) 'Release mode client config should preserve keyboard-only player slot.'
         Assert-True ($portableClientConfig.Contains('inputMode=none')) 'Release mode client config should preserve keyboard-only input mode.'
         Assert-True ($portableClientConfig.Contains('controllerClientCount=2')) 'Release mode client config should include controller-backed client count.'
-        Assert-True ($portableClientConfig.Contains('controllerDevice=none')) 'Release mode client config should include the legacy controller device key.'
+        Assert-True (-not $portableClientConfig.Contains('controllerDevice=')) 'Release mode client config should omit fixed controller device indices.'
         Assert-True ($portableClientConfig.Contains('endpoint=127.0.0.1:39001')) 'Release mode client config should include the broker endpoint.'
         Assert-True ($portableClientConfig.Contains('sessionId=portable-test')) 'Release mode client config should include the session id.'
     }

@@ -21,8 +21,8 @@ public sealed class ControllerAssignmentServiceTests
 
         Assert.AreEqual(2, assignment.PlayerSlot);
         Assert.AreEqual(BrokerClientInputMode.Auto, assignment.InputMode);
-        Assert.IsTrue(assignment.ControllerDevice.IsConfigured);
-        Assert.AreEqual(2, assignment.ControllerDevice.Device);
+        Assert.IsFalse(assignment.ControllerDevice.IsConfigured);
+        Assert.IsNull(assignment.ControllerDevice.Device);
         Assert.AreEqual(3, assignment.ControllerClientCount);
     }
 

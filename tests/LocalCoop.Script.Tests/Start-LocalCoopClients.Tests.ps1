@@ -218,6 +218,32 @@ try {
         }
 
     Assert-SequenceEqual $script:placementEvents @('resolve', 'move') 'Window placement should resolve and move after startup readiness is handled by the caller.'
+
+    $script:bootstrapEvents = @()
+    $bootstrapFocused = Invoke-LocalCoopSteamInputBootstrapFocus `
+        -ClientLaunches @(
+            [pscustomobject]@{ ClientIndex = 1; Process = [pscustomobject]@{ Id = 43 } },
+            [pscustomobject]@{ ClientIndex = 0; Process = [pscustomobject]@{ Id = 42 } }
+        ) `
+        -TimeoutSeconds 0 `
+        -HoldMilliseconds 5000 `
+        -ResolveWindowHandle {
+            param($process, $timeoutSeconds)
+            $script:bootstrapEvents += ('resolve:{0}' -f $process.Id)
+            [IntPtr]::new(101)
+        } `
+        -ActivateWindow {
+            param($windowHandle)
+            $script:bootstrapEvents += ('activate:{0}' -f $windowHandle.ToInt64())
+            $true
+        } `
+        -SleepMilliseconds {
+            param($milliseconds)
+            $script:bootstrapEvents += ('sleep:{0}' -f $milliseconds)
+        }
+
+    Assert-True $bootstrapFocused 'Steam Input bootstrap should focus the original host client.'
+    Assert-SequenceEqual $script:bootstrapEvents @('resolve:42', 'activate:101', 'sleep:5000') 'Steam Input bootstrap should focus client 0 and hold it long enough for discovery.'
     Assert-Throws {
         Invoke-LocalCoopClientWindowPlacementStabilization `
             -ClientLaunches @([pscustomobject]@{

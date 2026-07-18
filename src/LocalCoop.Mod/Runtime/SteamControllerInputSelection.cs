@@ -1,8 +1,6 @@
 using System.Collections;
 using System.Reflection;
 using System.Runtime.CompilerServices;
-using System.Security.Cryptography;
-using System.Text;
 using HarmonyLib;
 
 namespace LocalCoop.Mod.Runtime;
@@ -20,16 +18,16 @@ public static class SteamControllerInputSelection
     private static readonly Dictionary<string, Queue<DateTimeOffset>> PendingUiCompanionActions = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, Queue<DateTimeOffset>> PendingOriginalSteamControllerInputs = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, Queue<DateTimeOffset>> PendingNativeGeneratedActions = new(StringComparer.Ordinal);
+    private static readonly Queue<NativeFallbackGeneratedActionToken> PendingNativeFallbackGeneratedActions = new();
     private static readonly Dictionary<string, string> NativeGeneratedActionMap = CreateFallbackNativeGeneratedActionMap();
     private static readonly TimeSpan UiCompanionTokenLifetime = TimeSpan.FromMilliseconds(250);
     private const string FallbackTopPanelSourceAction = "controller_face_button_west";
     private const string FallbackTopPanelNativeAction = "mega_top_panel";
+    private const int SteamInputMaxOrigins = 8;
     private static string? _lastSelectionSummary;
     private static int? _selectedControllerDevice;
     private static int? _knownControllerDevice;
     private static object? _knownControllerHandle;
-    private static string? _selectedControllerClaimKey;
-    private static FileStream? _selectedControllerClaimStream;
 
     public static SteamControllerHandleSelection<T> ChooseControllerHandle<T>(
         IReadOnlyList<T> handles,
@@ -337,6 +335,56 @@ public static class SteamControllerInputSelection
         }
     }
 
+    public static void RegisterNativeFallbackSourceInput(
+        object? inputEvent,
+        BrokerControllerDeviceAssignment assignment,
+        DateTimeOffset? now = null)
+    {
+        if (!IsNativeJoypadButton(inputEvent)
+            || !DeviceMatches(inputEvent, assignment))
+        {
+            return;
+        }
+
+        lock (Lock)
+        {
+            PendingNativeFallbackGeneratedActions.Enqueue(new NativeFallbackGeneratedActionToken(
+                now ?? DateTimeOffset.UtcNow,
+                GetPressedState(inputEvent) ?? true));
+        }
+    }
+
+    public static bool TryConsumeNativeFallbackGeneratedInput(
+        object? inputEvent,
+        BrokerControllerDeviceAssignment assignment,
+        DateTimeOffset? now = null)
+    {
+        if (!IsGeneratedActionFromNativeFallback(inputEvent, assignment))
+        {
+            return false;
+        }
+
+        lock (Lock)
+        {
+            var currentTime = now ?? DateTimeOffset.UtcNow;
+            while (PendingNativeFallbackGeneratedActions.Count > 0
+                   && currentTime - PendingNativeFallbackGeneratedActions.Peek().Timestamp > UiCompanionTokenLifetime)
+            {
+                PendingNativeFallbackGeneratedActions.Dequeue();
+            }
+
+            var pressed = GetPressedState(inputEvent) ?? true;
+            if (PendingNativeFallbackGeneratedActions.Count == 0
+                || PendingNativeFallbackGeneratedActions.Peek().Pressed != pressed)
+            {
+                return false;
+            }
+
+            PendingNativeFallbackGeneratedActions.Dequeue();
+            return true;
+        }
+    }
+
     public static void RegisterGeneratedOriginalSteamControllerInput(object? inputEvent, DateTimeOffset? now = null)
     {
         var key = GetOriginalSteamControllerInputKey(inputEvent);
@@ -567,6 +615,7 @@ public static class SteamControllerInputSelection
             PendingUiCompanionActions.Clear();
             PendingOriginalSteamControllerInputs.Clear();
             PendingNativeGeneratedActions.Clear();
+            PendingNativeFallbackGeneratedActions.Clear();
             ResetNativeGeneratedActionMap();
             _lastSelectionSummary = null;
             _selectedControllerDevice = null;
@@ -599,6 +648,13 @@ public static class SteamControllerInputSelection
         object? selectedHandle)
     {
         return IsSelectionAlreadyApplied(assignment, currentHandle, selectedHandle);
+    }
+
+    public static BrokerControllerDeviceAssignment ResolveNativeFallbackAssignmentForTesting(
+        BrokerControllerDeviceAssignment assignment,
+        int? controllerClientCount)
+    {
+        return ResolveNativeFallbackAssignment(assignment, controllerClientCount);
     }
 
     private static void AcceptGeneratedUiCompanionInputEvent(object? inputEvent)
@@ -652,34 +708,26 @@ public static class SteamControllerInputSelection
                 return;
             }
 
+            RunSteamInputFrame();
             var handles = GetConnectedControllerHandles(strategy);
+            var handleSummary = DescribeSteamControllerHandles(handles);
+            var gamepadHandleSummary = DescribeSteamGamepadIndexHandles(
+                strategy,
+                handles,
+                controllerClientCount);
             var knownHandle = GetKnownControllerHandle(assignment);
             var unavailableHandles = new HashSet<object>(ReferenceEqualityComparer.Instance);
-            SteamControllerHandleSelection<object> selection;
-            string? failedClaimReason = null;
-            while (true)
-            {
-                selection = ChooseControllerHandle(
-                    handles,
-                    assignment,
-                    knownHandle,
-                    controllerClientCount,
-                    unavailableHandles);
-                if (!selection.Selected || selection.Handle is null)
-                {
-                    break;
-                }
-
-                if (TryClaimControllerHandle(claimScope, clientIndex, selection.Handle, out failedClaimReason))
-                {
-                    break;
-                }
-
-                unavailableHandles.Add(selection.Handle);
-            }
+            var selection = ChooseControllerHandle(
+                handles,
+                assignment,
+                knownHandle,
+                controllerClientCount,
+                unavailableHandles);
 
             if (!selection.Selected || selection.Handle is null)
             {
+                var nativeFallbackAssignment = ResolveNativeFallbackAssignment(assignment, controllerClientCount);
+                var nativeJoypads = GetConnectedNativeJoypadDeviceIds();
                 ClearGeneratedInputEvents();
                 ClearSelectedControllerDevice();
                 ClearCurrentControllerHandle(strategy);
@@ -687,7 +735,11 @@ public static class SteamControllerInputSelection
                 LogIfChanged(
                     $"Steam controller selection: unavailable playerSlot={selection.Index} connected={handles.Count} "
                     + $"controllerClients={controllerClientCount?.ToString() ?? "<unknown>"} reason={selection.Reason}"
-                    + $"{(failedClaimReason is null ? string.Empty : $" claim={failedClaimReason}")}.",
+                    + $" nativeFallback={FormatNativeFallback(nativeFallbackAssignment)}"
+                    + $" nativeJoypads={FormatNativeJoypads(nativeJoypads)}"
+                    + $" handles={handleSummary}"
+                    + $" gamepadSlots={gamepadHandleSummary}"
+                    + ".",
                     log);
                 return;
             }
@@ -695,11 +747,76 @@ public static class SteamControllerInputSelection
             var previousHandle = GetCurrentControllerHandle(strategy);
             if (IsSelectionAlreadyApplied(assignment, previousHandle, selection.Handle))
             {
+                RefreshSelectedInputStateForFrame(strategy);
                 return;
             }
 
             SetCurrentControllerHandle(strategy, selection.Handle);
             var controllerType = RefreshControllerConfig(strategy, selection.Handle);
+            var selectedNativeFallbackAssignment = ResolveNativeFallbackAssignment(assignment, controllerClientCount);
+            var selectedNativeJoypads = GetConnectedNativeJoypadDeviceIds();
+            var bindingAvailability = EvaluateSteamControllerBindings(
+                selection.Handle,
+                GetCurrentActionSetHandle(strategy));
+            if (bindingAvailability.IsPending)
+            {
+                ClearGeneratedInputEvents();
+                ClearSelectedControllerDevice();
+                ClearCurrentControllerHandle(strategy);
+                ClearPressedInputs(strategy);
+                LogIfChanged(
+                    "Steam controller selection: "
+                    + $"pending playerSlot={selection.Index} handle={selection.Handle} connected={handles.Count} "
+                    + $"controllerClients={controllerClientCount?.ToString() ?? "<unknown>"} "
+                    + $"reason={bindingAvailability.Summary} "
+                    + $"nativeFallback={FormatNativeFallback(selectedNativeFallbackAssignment)} "
+                    + $"nativeJoypads={FormatNativeJoypads(selectedNativeJoypads)} "
+                    + $"handles={handleSummary} "
+                    + $"gamepadSlots={gamepadHandleSummary}.",
+                    log);
+                return;
+            }
+
+            if (bindingAvailability.IsKnown && !bindingAvailability.IsUsable)
+            {
+                ClearGeneratedInputEvents();
+                ClearSelectedControllerDevice();
+                ClearCurrentControllerHandle(strategy);
+                ClearPressedInputs(strategy);
+                LogIfChanged(
+                    "Steam controller selection: "
+                    + $"unusable playerSlot={selection.Index} handle={selection.Handle} connected={handles.Count} "
+                    + $"controllerClients={controllerClientCount?.ToString() ?? "<unknown>"} "
+                    + $"reason={bindingAvailability.Summary} "
+                    + $"nativeFallback={FormatNativeFallback(selectedNativeFallbackAssignment)} "
+                    + $"nativeJoypads={FormatNativeJoypads(selectedNativeJoypads)} "
+                    + $"handles={handleSummary} "
+                    + $"gamepadSlots={gamepadHandleSummary}.",
+                    log);
+                return;
+            }
+
+            if (IsUnknownSteamInputType(controllerType)
+                && !bindingAvailability.IsKnown
+                && selectedNativeFallbackAssignment.Device is not null)
+            {
+                ClearGeneratedInputEvents();
+                ClearSelectedControllerDevice();
+                ClearCurrentControllerHandle(strategy);
+                ClearPressedInputs(strategy);
+                LogIfChanged(
+                    "Steam controller selection: "
+                    + $"unknown input type playerSlot={selection.Index} handle={selection.Handle} connected={handles.Count} "
+                    + $"controllerClients={controllerClientCount?.ToString() ?? "<unknown>"} "
+                    + $"reason={bindingAvailability.Summary} "
+                    + $"nativeFallback={FormatNativeFallback(selectedNativeFallbackAssignment)} "
+                    + $"nativeJoypads={FormatNativeJoypads(selectedNativeJoypads)} "
+                    + $"handles={handleSummary} "
+                    + $"gamepadSlots={gamepadHandleSummary}.",
+                    log);
+                return;
+            }
+
             var nativeBridgeSummary = RefreshNativeGeneratedActionMap(strategy);
             RegisterGeneratedInputEventsFromStrategy(strategy);
 
@@ -713,8 +830,11 @@ public static class SteamControllerInputSelection
                 "Steam controller selection: "
                 + $"selected playerSlot={selection.Index} handle={selection.Handle} connected={handles.Count} "
                 + $"controllerClients={controllerClientCount?.ToString() ?? "<unknown>"} "
-                + $"claim=held "
-                + $"inputType={controllerType ?? "<unknown>"} {nativeBridgeSummary}.",
+                + $"inputType={controllerType ?? "<unknown>"} {nativeBridgeSummary} "
+                + $"nativeFallback={FormatNativeFallback(selectedNativeFallbackAssignment)} "
+                + $"nativeJoypads={FormatNativeJoypads(selectedNativeJoypads)} "
+                + $"handles={handleSummary} "
+                + $"gamepadSlots={gamepadHandleSummary}.",
                 log);
         }
         catch (Exception exception) when (exception is TargetInvocationException or MissingMemberException or InvalidOperationException or ArgumentException)
@@ -725,6 +845,41 @@ public static class SteamControllerInputSelection
                 $"Steam controller selection failed: {exception.GetType().Name}: {exception.Message}",
                 log);
         }
+    }
+
+    public static bool RefreshSelectedInputStateForFrame(object strategy)
+    {
+        try
+        {
+            var handle = GetCurrentControllerHandle(strategy);
+            if (handle is null)
+            {
+                return false;
+            }
+
+            RunSteamInputFrame();
+            var actionSet = GetCurrentActionSetHandle(strategy) ?? ResolveControlsActionSet(strategy);
+            if (actionSet is null)
+            {
+                return true;
+            }
+
+            ActivateSteamInputActionSet(handle, actionSet);
+            return true;
+        }
+        catch (Exception exception) when (exception is TargetInvocationException or MissingMemberException or InvalidOperationException or ArgumentException)
+        {
+            return false;
+        }
+    }
+
+    public static BrokerControllerDeviceAssignment ResolveEffectiveControllerDevice(
+        BrokerControllerDeviceAssignment assignment,
+        int? controllerClientCount)
+    {
+        return IsSelectedControllerActive(assignment)
+            ? assignment
+            : ResolveNativeFallbackAssignment(assignment, controllerClientCount);
     }
 
     private static bool IsSelectionAlreadyApplied(
@@ -748,10 +903,7 @@ public static class SteamControllerInputSelection
 
     private static List<object> GetConnectedControllerHandles(object strategy)
     {
-        var handleField = strategy.GetType().GetField("_currentControllerHandle", Members)
-            ?? throw new MissingMemberException(strategy.GetType().FullName, "_currentControllerHandle");
-        var nullableHandleType = handleField.FieldType;
-        var handleType = Nullable.GetUnderlyingType(nullableHandleType) ?? nullableHandleType;
+        var handleType = GetSteamInputHandleType(strategy);
         var steamInputType = AccessTools.TypeByName("Steamworks.SteamInput")
             ?? throw new MissingMemberException("Steamworks.SteamInput");
         var method = steamInputType.GetMethod("GetConnectedControllers", Members, [handleType.MakeArrayType()])
@@ -770,6 +922,327 @@ public static class SteamControllerInputSelection
         }
 
         return handles;
+    }
+
+    private static Type GetSteamInputHandleType(object strategy)
+    {
+        var handleField = strategy.GetType().GetField("_currentControllerHandle", Members)
+            ?? throw new MissingMemberException(strategy.GetType().FullName, "_currentControllerHandle");
+        var nullableHandleType = handleField.FieldType;
+        return Nullable.GetUnderlyingType(nullableHandleType) ?? nullableHandleType;
+    }
+
+    private static bool TryGetControllerHandleForGamepadIndex(
+        object strategy,
+        int gamepadIndex,
+        out object? handle)
+    {
+        handle = null;
+        try
+        {
+            var handleType = GetSteamInputHandleType(strategy);
+            var steamInputType = AccessTools.TypeByName("Steamworks.SteamInput")
+                ?? throw new MissingMemberException("Steamworks.SteamInput");
+            var method = steamInputType.GetMethod("GetControllerForGamepadIndex", Members, [typeof(int)]);
+            if (method is null)
+            {
+                return false;
+            }
+
+            var mappedHandle = method.Invoke(null, [gamepadIndex]);
+            if (mappedHandle is null || !handleType.IsInstanceOfType(mappedHandle))
+            {
+                return false;
+            }
+
+            handle = mappedHandle;
+            return true;
+        }
+        catch (Exception exception) when (exception is TargetInvocationException or MissingMemberException or ArgumentException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    private static bool TryFindConnectedControllerHandle(
+        IReadOnlyList<object> connectedHandles,
+        object mappedHandle,
+        out object? connectedHandle)
+    {
+        foreach (var handle in connectedHandles)
+        {
+            if (Equals(handle, mappedHandle))
+            {
+                connectedHandle = handle;
+                return true;
+            }
+        }
+
+        connectedHandle = null;
+        return false;
+    }
+
+    private static BrokerControllerDeviceAssignment ResolveNativeFallbackAssignment(
+        BrokerControllerDeviceAssignment assignment,
+        int? controllerClientCount)
+    {
+        if (!assignment.IsConfigured || assignment.Device is null)
+        {
+            return assignment;
+        }
+
+        if (controllerClientCount is not > 0 || assignment.Device.Value >= controllerClientCount.Value)
+        {
+            return assignment;
+        }
+
+        var nativeJoypads = GetConnectedNativeJoypadDeviceIds();
+        if (nativeJoypads.Count == 0)
+        {
+            return assignment;
+        }
+
+        var playerSlot = assignment.Device.Value;
+        if (playerSlot < nativeJoypads.Count)
+        {
+            return new BrokerControllerDeviceAssignment(IsConfigured: true, Device: nativeJoypads[playerSlot]);
+        }
+
+        return BrokerControllerDeviceAssignment.None;
+    }
+
+    private static List<int> GetConnectedNativeJoypadDeviceIds()
+    {
+        try
+        {
+            var inputType = AccessTools.TypeByName("Godot.Input");
+            var method = inputType?.GetMethod("GetConnectedJoypads", Members, Type.EmptyTypes);
+            if (method?.Invoke(null, null) is not IEnumerable joypads)
+            {
+                return [];
+            }
+
+            var devices = new List<int>();
+            foreach (var joypad in joypads)
+            {
+                if (TryConvertInt(joypad, out var device) && device >= 0)
+                {
+                    devices.Add(device);
+                }
+            }
+
+            return devices;
+        }
+        catch (Exception exception) when (exception is TargetInvocationException or ArgumentException or InvalidOperationException)
+        {
+            return [];
+        }
+    }
+
+    private static bool TryConvertInt(object? value, out int result)
+    {
+        switch (value)
+        {
+            case int intValue:
+                result = intValue;
+                return true;
+            case IConvertible convertible:
+                try
+                {
+                    result = convertible.ToInt32(null);
+                    return true;
+                }
+                catch (Exception exception) when (exception is FormatException or InvalidCastException or OverflowException)
+                {
+                    result = default;
+                    return false;
+                }
+            default:
+                result = default;
+                return false;
+        }
+    }
+
+    private static string FormatNativeFallback(BrokerControllerDeviceAssignment assignment)
+    {
+        if (!assignment.IsConfigured)
+        {
+            return "unconfigured";
+        }
+
+        return assignment.Device is null
+            ? "none"
+            : $"device={assignment.Device.Value}";
+    }
+
+    private static string FormatNativeJoypads(IReadOnlyCollection<int> nativeJoypads)
+    {
+        if (nativeJoypads.Count == 0)
+        {
+            return "[]";
+        }
+
+        return $"[{string.Join(",", nativeJoypads.Select(device =>
+            $"{device}:{FormatNativeJoypadValue(GetNativeJoypadProperty(device, "GetJoyName"))}:{FormatNativeJoypadValue(GetNativeJoypadProperty(device, "GetJoyGuid"))}"))}]";
+    }
+
+    private static string? GetNativeJoypadProperty(int device, string methodName)
+    {
+        try
+        {
+            var inputType = AccessTools.TypeByName("Godot.Input");
+            return inputType?.GetMethod(methodName, Members, [typeof(int)])
+                ?.Invoke(null, [device])
+                ?.ToString();
+        }
+        catch (Exception exception) when (exception is TargetInvocationException or ArgumentException or InvalidOperationException)
+        {
+            return null;
+        }
+    }
+
+    private static string FormatNativeJoypadValue(string? value)
+    {
+        return string.IsNullOrWhiteSpace(value)
+            ? "<unknown>"
+            : value.Replace(',', '_').Replace(':', '_').Replace(' ', '_');
+    }
+
+    private static string DescribeSteamControllerHandles(IReadOnlyList<object> handles)
+    {
+        if (handles.Count == 0)
+        {
+            return "[]";
+        }
+
+        var parts = new List<string>(handles.Count);
+        for (var index = 0; index < handles.Count; index++)
+        {
+            var handle = handles[index];
+            var inputType = GetInputTypeForHandle(handle)?.ToString() ?? "<unknown>";
+            parts.Add($"{index}:{handle}:{inputType}");
+        }
+
+        return $"[{string.Join(",", parts)}]";
+    }
+
+    private static string DescribeSteamGamepadIndexHandles(
+        object strategy,
+        IReadOnlyList<object> connectedHandles,
+        int? controllerClientCount)
+    {
+        var slotCount = Math.Clamp(Math.Max(controllerClientCount ?? 4, 4), 1, 16);
+        var parts = new List<string>(slotCount);
+        for (var index = 0; index < slotCount; index++)
+        {
+            if (!TryGetControllerHandleForGamepadIndex(strategy, index, out var mappedHandle) || mappedHandle is null)
+            {
+                return "<GetControllerForGamepadIndex unavailable>";
+            }
+
+            if (IsZeroSteamInputHandle(mappedHandle))
+            {
+                parts.Add($"{index}:0:<native-or-invalid>");
+                continue;
+            }
+
+            var isConnected = TryFindConnectedControllerHandle(connectedHandles, mappedHandle, out var connectedHandle);
+            var handle = connectedHandle ?? mappedHandle;
+            var inputType = GetInputTypeForHandle(handle)?.ToString() ?? "<unknown>";
+            parts.Add(isConnected
+                ? $"{index}:{handle}:{inputType}"
+                : $"{index}:{handle}:{inputType}:not-connected");
+        }
+
+        return $"[{string.Join(",", parts)}]";
+    }
+
+    private static bool IsZeroSteamInputHandle(object? handle)
+    {
+        if (handle is null)
+        {
+            return true;
+        }
+
+        var value = ReadHandleNumericValue(handle);
+        if (value is not null)
+        {
+            return value.Value == 0;
+        }
+
+        var defaultValue = handle.GetType().IsValueType
+            ? Activator.CreateInstance(handle.GetType())
+            : null;
+        return Equals(handle, defaultValue);
+    }
+
+    private static ulong? ReadHandleNumericValue(object handle)
+    {
+        foreach (var memberName in new[]
+        {
+            "Value",
+            "m_InputHandle",
+            "m_ControllerHandle",
+            "m_InputActionSetHandle",
+            "m_InputDigitalActionHandle",
+            "m_Handle"
+        })
+        {
+            var property = handle.GetType().GetProperty(memberName, Members);
+            if (TryConvertUInt64(property?.GetValue(handle), out var propertyValue))
+            {
+                return propertyValue;
+            }
+
+            var field = handle.GetType().GetField(memberName, Members);
+            if (TryConvertUInt64(field?.GetValue(handle), out var fieldValue))
+            {
+                return fieldValue;
+            }
+        }
+
+        if (handle is IConvertible convertible)
+        {
+            try
+            {
+                return convertible.ToUInt64(null);
+            }
+            catch (Exception exception) when (exception is FormatException or InvalidCastException or OverflowException)
+            {
+                return null;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool TryConvertUInt64(object? value, out ulong result)
+    {
+        switch (value)
+        {
+            case ulong ulongValue:
+                result = ulongValue;
+                return true;
+            case IConvertible convertible:
+                try
+                {
+                    result = convertible.ToUInt64(null);
+                    return true;
+                }
+                catch (Exception exception) when (exception is FormatException or InvalidCastException or OverflowException)
+                {
+                    result = default;
+                    return false;
+                }
+            default:
+                result = default;
+                return false;
+        }
+    }
+
+    private static bool IsUnknownSteamInputType(object? controllerType)
+    {
+        return string.Equals(controllerType?.ToString(), "k_ESteamInputType_Unknown", StringComparison.Ordinal);
     }
 
     private static object? GetCurrentControllerHandle(object strategy)
@@ -794,10 +1267,7 @@ public static class SteamControllerInputSelection
 
     private static object? RefreshControllerConfig(object strategy, object handle)
     {
-        var steamInputType = AccessTools.TypeByName("Steamworks.SteamInput")
-            ?? throw new MissingMemberException("Steamworks.SteamInput");
-        var controllerType = steamInputType.GetMethod("GetInputTypeForHandle", Members, [handle.GetType()])
-            ?.Invoke(null, [handle]);
+        var controllerType = GetInputTypeForHandle(handle);
         if (controllerType is not null)
         {
             strategy.GetType().GetMethod("UpdateControllerConfig", Members, [controllerType.GetType()])
@@ -806,17 +1276,155 @@ public static class SteamControllerInputSelection
                 ?.Invoke(strategy, null);
         }
 
-        var actionSet = steamInputType.GetMethod("GetActionSetHandle", Members, [typeof(string)])
-            ?.Invoke(null, ["Controls"]);
+        var actionSet = ResolveControlsActionSet(strategy);
         if (actionSet is null)
         {
             return controllerType;
         }
 
-        strategy.GetType().GetField("_currentActionSetHandle", Members)?.SetValue(strategy, actionSet);
+        ActivateSteamInputActionSet(handle, actionSet);
+        return controllerType;
+    }
+
+    private static SteamControllerBindingAvailability EvaluateSteamControllerBindings(
+        object handle,
+        object? actionSet)
+    {
+        if (actionSet is null || IsZeroSteamInputHandle(actionSet))
+        {
+            return SteamControllerBindingAvailability.Unknown("action set unavailable");
+        }
+
+        try
+        {
+            var steamInputType = AccessTools.TypeByName("Steamworks.SteamInput")
+                ?? throw new MissingMemberException("Steamworks.SteamInput");
+            var getDeviceBindingRevision = steamInputType.GetMethods(Members)
+                .FirstOrDefault(method =>
+                    string.Equals(method.Name, "GetDeviceBindingRevision", StringComparison.Ordinal)
+                    && method.GetParameters() is
+                    [var handleParameter, var majorParameter, var minorParameter]
+                    && handleParameter.ParameterType.IsAssignableFrom(handle.GetType())
+                    && majorParameter.ParameterType.IsByRef
+                    && minorParameter.ParameterType.IsByRef);
+            var bindingRevisionSummary = string.Empty;
+            bool? bindingRevisionLoaded = null;
+            if (getDeviceBindingRevision is not null)
+            {
+                object?[] revisionArguments = [handle, 0, 0];
+                bindingRevisionLoaded = getDeviceBindingRevision.Invoke(null, revisionArguments) is true;
+                if (bindingRevisionLoaded is true)
+                {
+                    bindingRevisionSummary = $" bindingRevision={revisionArguments[1]}.{revisionArguments[2]}";
+                }
+            }
+
+            var getDigitalActionHandle = steamInputType.GetMethod(
+                "GetDigitalActionHandle",
+                Members,
+                [typeof(string)]);
+            var getDigitalActionOrigins = steamInputType.GetMethods(Members)
+                .FirstOrDefault(method =>
+                    string.Equals(method.Name, "GetDigitalActionOrigins", StringComparison.Ordinal)
+                    && method.GetParameters() is
+                    [var handleParameter, var actionSetParameter, var actionParameter, var originsParameter]
+                    && handleParameter.ParameterType.IsAssignableFrom(handle.GetType())
+                    && actionSetParameter.ParameterType.IsAssignableFrom(actionSet.GetType())
+                    && originsParameter.ParameterType.IsArray);
+            if (getDigitalActionHandle is null || getDigitalActionOrigins is null)
+            {
+                return SteamControllerBindingAvailability.Unknown("action origin API unavailable");
+            }
+
+            var originType = getDigitalActionOrigins.GetParameters()[3].ParameterType.GetElementType();
+            if (originType is null)
+            {
+                return SteamControllerBindingAvailability.Unknown("action origin type unavailable");
+            }
+
+            var validActionHandles = 0;
+            foreach (var actionName in new[] { "Confirm", "Select", "Cancel", "Up", "Down" })
+            {
+                var actionHandle = getDigitalActionHandle.Invoke(null, [actionName]);
+                if (actionHandle is null || IsZeroSteamInputHandle(actionHandle))
+                {
+                    continue;
+                }
+
+                validActionHandles++;
+                var origins = Array.CreateInstance(originType, SteamInputMaxOrigins);
+                var originCount = getDigitalActionOrigins.Invoke(
+                    null,
+                    [handle, actionSet, actionHandle, origins]) is int count
+                    ? Math.Clamp(count, 0, origins.Length)
+                    : 0;
+                if (originCount > 0)
+                {
+                    return SteamControllerBindingAvailability.Usable(
+                        $"bound action origins available action={actionName} count={originCount}{bindingRevisionSummary}");
+                }
+            }
+
+            if (bindingRevisionLoaded is false)
+            {
+                return SteamControllerBindingAvailability.Pending(
+                    $"Steam binding configuration is still loading; no origins across {validActionHandles} core actions");
+            }
+
+            return SteamControllerBindingAvailability.Unusable(
+                validActionHandles == 0
+                    ? "no valid Steam action handles"
+                    : $"no bound action origins across {validActionHandles} core actions{bindingRevisionSummary}");
+        }
+        catch (Exception exception) when (exception is TargetInvocationException or MissingMemberException or InvalidOperationException or ArgumentException)
+        {
+            return SteamControllerBindingAvailability.Unknown(
+                $"action binding probe failed: {exception.GetType().Name}");
+        }
+    }
+
+    private static object? ResolveControlsActionSet(object strategy)
+    {
+        var steamInputType = AccessTools.TypeByName("Steamworks.SteamInput")
+            ?? throw new MissingMemberException("Steamworks.SteamInput");
+        var actionSet = steamInputType.GetMethod("GetActionSetHandle", Members, [typeof(string)])
+            ?.Invoke(null, ["Controls"]);
+        if (actionSet is not null)
+        {
+            strategy.GetType().GetField("_currentActionSetHandle", Members)?.SetValue(strategy, actionSet);
+        }
+
+        return actionSet;
+    }
+
+    private static object? GetCurrentActionSetHandle(object strategy)
+    {
+        return strategy.GetType().GetField("_currentActionSetHandle", Members)?.GetValue(strategy);
+    }
+
+    private static void RunSteamInputFrame()
+    {
+        var steamInputType = AccessTools.TypeByName("Steamworks.SteamInput")
+            ?? throw new MissingMemberException("Steamworks.SteamInput");
+        var runFrame = steamInputType.GetMethod("RunFrame", Members, [typeof(bool)])
+            ?? steamInputType.GetMethod("RunFrame", Members, Type.EmptyTypes);
+        runFrame?.Invoke(null, runFrame.GetParameters().Length == 0 ? null : [true]);
+    }
+
+    private static void ActivateSteamInputActionSet(object handle, object actionSet)
+    {
+        var steamInputType = AccessTools.TypeByName("Steamworks.SteamInput")
+            ?? throw new MissingMemberException("Steamworks.SteamInput");
         steamInputType.GetMethod("ActivateActionSet", Members, [handle.GetType(), actionSet.GetType()])
             ?.Invoke(null, [handle, actionSet]);
-        return controllerType;
+    }
+
+    private static object? GetInputTypeForHandle(object handle)
+    {
+        var steamInputType = AccessTools.TypeByName("Steamworks.SteamInput")
+            ?? throw new MissingMemberException("Steamworks.SteamInput");
+        return steamInputType.GetMethod("GetInputTypeForHandle", Members, [handle.GetType()])
+            ?.Invoke(null, [handle]);
     }
 
     private static string RefreshNativeGeneratedActionMap(object strategy)
@@ -920,9 +1528,11 @@ public static class SteamControllerInputSelection
             ["controller_left_trigger"] = "mega_view_draw_pile",
             ["controller_right_trigger"] = "mega_view_discard_pile",
             ["controller_ps4_touchpad"] = "mega_view_map",
+            ["controller_select_button"] = "mega_view_map",
+            ["ui_controller_touch_pad"] = "mega_view_map",
             ["controller_start"] = "mega_pause_and_back",
             ["controller_start_button"] = "mega_pause_and_back",
-            ["controller_face_button_north"] = "mega_peek"
+            ["controller_joystick_press"] = "mega_peek"
         };
     }
 
@@ -998,7 +1608,6 @@ public static class SteamControllerInputSelection
         lock (Lock)
         {
             _selectedControllerDevice = null;
-            ReleaseSelectedControllerClaimLocked();
         }
     }
 
@@ -1009,75 +1618,7 @@ public static class SteamControllerInputSelection
             _selectedControllerDevice = null;
             _knownControllerDevice = null;
             _knownControllerHandle = null;
-            ReleaseSelectedControllerClaimLocked();
         }
-    }
-
-    private static bool TryClaimControllerHandle(
-        string claimScope,
-        int clientIndex,
-        object handle,
-        out string failureReason)
-    {
-        failureReason = "<none>";
-
-        var claimKey = BuildControllerClaimKey(claimScope, handle);
-        lock (Lock)
-        {
-            if (string.Equals(_selectedControllerClaimKey, claimKey, StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        try
-        {
-            var claimDirectory = Path.Combine(Path.GetTempPath(), "LocalCoopControllerClaims");
-            Directory.CreateDirectory(claimDirectory);
-            var claimPath = Path.Combine(claimDirectory, $"{HashControllerClaimKey(claimKey)}.claim");
-            var stream = new FileStream(
-                claimPath,
-                FileMode.OpenOrCreate,
-                FileAccess.ReadWrite,
-                FileShare.None,
-                bufferSize: 1,
-                FileOptions.DeleteOnClose);
-            var claimText = Encoding.UTF8.GetBytes($"scope={claimScope}{Environment.NewLine}clientIndex={clientIndex}{Environment.NewLine}handle={handle}{Environment.NewLine}");
-            stream.SetLength(0);
-            stream.Write(claimText, 0, claimText.Length);
-            stream.Flush();
-
-            lock (Lock)
-            {
-                ReleaseSelectedControllerClaimLocked();
-                _selectedControllerClaimKey = claimKey;
-                _selectedControllerClaimStream = stream;
-            }
-
-            return true;
-        }
-        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
-        {
-            failureReason = $"already-claimed handle={handle} reason={exception.GetType().Name}";
-            return false;
-        }
-    }
-
-    private static string BuildControllerClaimKey(string claimScope, object handle)
-    {
-        return $"{claimScope}|{handle.GetType().FullName}|{handle}";
-    }
-
-    private static string HashControllerClaimKey(string claimKey)
-    {
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(claimKey)));
-    }
-
-    private static void ReleaseSelectedControllerClaimLocked()
-    {
-        _selectedControllerClaimKey = null;
-        _selectedControllerClaimStream?.Dispose();
-        _selectedControllerClaimStream = null;
     }
 
     private static void PruneExpiredUiCompanionTokens(
@@ -1146,6 +1687,49 @@ public static class SteamControllerInputSelection
 
         var axis = GetPropertyValue(inputEvent, "Axis")?.ToString() ?? "<none>";
         return $"{typeName}|device={device}|axis={axis}";
+    }
+
+    private static bool IsNativeJoypadButton(object? inputEvent)
+    {
+        if (inputEvent is null)
+        {
+            return false;
+        }
+
+        var typeName = inputEvent.GetType().FullName ?? inputEvent.GetType().Name;
+        return typeName.Contains("JoypadButton", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsGeneratedActionFromNativeFallback(
+        object? inputEvent,
+        BrokerControllerDeviceAssignment assignment)
+    {
+        if (inputEvent is null || assignment is not { IsConfigured: true, Device: not null })
+        {
+            return false;
+        }
+
+        var typeName = inputEvent.GetType().FullName ?? inputEvent.GetType().Name;
+        if (!typeName.Contains("InputEventAction", StringComparison.OrdinalIgnoreCase)
+            || GetPressedState(inputEvent) is null)
+        {
+            return false;
+        }
+
+        var action = GetActionName(inputEvent);
+        if (string.IsNullOrWhiteSpace(action))
+        {
+            return false;
+        }
+
+        return !DeviceMatches(inputEvent, assignment);
+    }
+
+    private static bool DeviceMatches(object? inputEvent, BrokerControllerDeviceAssignment assignment)
+    {
+        return assignment is { IsConfigured: true, Device: not null }
+            && GetPropertyValue(inputEvent, "Device") is int device
+            && device == assignment.Device.Value;
     }
 
     private static object? GetPropertyValue(object? source, string propertyName)
@@ -1278,6 +1862,25 @@ public static class SteamControllerInputSelection
         }
     }
 
+    private static bool? GetPressedState(object? inputEvent)
+    {
+        if (inputEvent is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return inputEvent.GetType().GetProperty("Pressed", Members)?.GetValue(inputEvent) is bool pressed
+                ? pressed
+                : null;
+        }
+        catch (TargetInvocationException)
+        {
+            return null;
+        }
+    }
+
     private static string? MapSteamControllerActionToUiCompanion(string? action)
     {
         return action switch
@@ -1288,6 +1891,7 @@ public static class SteamControllerInputSelection
             "controller_d_pad_south" => "ui_down",
             "controller_face_button_south" => "ui_select",
             "controller_face_button_east" => "ui_cancel",
+            "controller_face_button_north" => "ui_accept",
             _ => null
         };
     }
@@ -1329,3 +1933,32 @@ public sealed record SteamControllerHandleSelection<T>(
     T? Handle,
     string Reason,
     bool RememberHandle = true);
+
+internal readonly record struct NativeFallbackGeneratedActionToken(DateTimeOffset Timestamp, bool Pressed);
+
+internal readonly record struct SteamControllerBindingAvailability(
+    bool IsKnown,
+    bool IsUsable,
+    bool IsPending,
+    string Summary)
+{
+    public static SteamControllerBindingAvailability Unknown(string summary)
+    {
+        return new SteamControllerBindingAvailability(false, false, false, summary);
+    }
+
+    public static SteamControllerBindingAvailability Usable(string summary)
+    {
+        return new SteamControllerBindingAvailability(true, true, false, summary);
+    }
+
+    public static SteamControllerBindingAvailability Unusable(string summary)
+    {
+        return new SteamControllerBindingAvailability(true, false, false, summary);
+    }
+
+    public static SteamControllerBindingAvailability Pending(string summary)
+    {
+        return new SteamControllerBindingAvailability(false, false, true, summary);
+    }
+}

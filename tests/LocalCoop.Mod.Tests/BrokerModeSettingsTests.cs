@@ -36,8 +36,8 @@ public sealed class BrokerModeSettingsTests
         Assert.AreEqual(BrokerClientRole.Client, settings.Config?.Role);
         Assert.AreEqual("client-2", settings.ClientId);
         Assert.AreEqual(Path.Combine(modDirectory, "localcoop-client-2-events.txt"), settings.EventLogPath);
-        Assert.IsTrue(settings.Config?.ControllerDevice.IsConfigured);
-        Assert.AreEqual(2, settings.Config?.ControllerDevice.Device);
+        Assert.IsFalse(settings.Config?.ControllerDevice.IsConfigured);
+        Assert.IsNull(settings.Config?.ControllerDevice.Device);
     }
 
     [TestMethod]

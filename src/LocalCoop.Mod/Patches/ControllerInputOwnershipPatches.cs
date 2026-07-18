@@ -15,7 +15,7 @@ public static class ControllerInputOwnershipPatches
         ),
         (
             "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager",
-            ["_UnhandledInput"]
+            ["_Ready", "_UnhandledInput"]
         ),
         (
             "MegaCrit.Sts2.Core.Nodes.CommonUi.NHotkeyManager",
@@ -57,16 +57,77 @@ public static class ControllerInputOwnershipPatches
         }
 
         var clientAssignment = LocalCoopInputRouter.ResolveAssignment(settings.Config);
-        var controllerAssignment = clientAssignment.ControllerDevice;
+        var configuredControllerAssignment = clientAssignment.ControllerDevice;
         var inputEvent = __args.FirstOrDefault();
+        if (DynamicControllerCoordinator.IsEnabled)
+        {
+            var instanceTypeName = __instance.GetType().FullName ?? __instance.GetType().Name;
+            if (string.Equals(instanceTypeName, "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager", StringComparison.Ordinal))
+            {
+                DynamicControllerInputBridge.RememberInputManager(__instance);
+            }
+
+            var isGeneratedInput = SteamControllerInputSelection.IsGeneratedInputEvent(inputEvent);
+            if (isGeneratedInput
+                && string.Equals(instanceTypeName, "MegaCrit.Sts2.Core.Nodes.CommonUi.NInputManager", StringComparison.Ordinal)
+                && string.Equals(__originalMethod.Name, "_UnhandledInput", StringComparison.Ordinal))
+            {
+                var dispatched = DynamicControllerInputBridge.DispatchMappedActions(__instance, inputEvent!);
+                if (dispatched > 0)
+                {
+                    new BrokerEventLog(settings.EventLogPath).Write(
+                        $"Dynamic controller input mapped for background client: dispatched={dispatched}.");
+                    MarkInputHandled(__instance, inputEvent);
+                    return false;
+                }
+            }
+
+            DynamicControllerCoordinator.ObservePhysicalInput(inputEvent);
+            var allowed = DynamicControllerCoordinator.ShouldAllowControllerInput(inputEvent);
+            if (allowed
+                && string.Equals(instanceTypeName, "MegaCrit.Sts2.Core.Nodes.CommonUi.NControllerManager", StringComparison.Ordinal)
+                && string.Equals(__originalMethod.Name, "_Input", StringComparison.Ordinal)
+                && isGeneratedInput)
+            {
+                var action = inputEvent?.GetType()
+                    .GetProperty("Action", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+                    ?.GetValue(inputEvent)?.ToString() ?? "<unknown>";
+                var pressed = IsPressedInput(inputEvent);
+                new BrokerEventLog(settings.EventLogPath).Write(
+                    $"Dynamic generated input reached controller manager: action={action} pressed={pressed}.");
+            }
+
+            if (!allowed)
+            {
+                MarkInputHandled(__instance, inputEvent);
+            }
+
+            return allowed;
+        }
+
         var typeName = __instance.GetType().FullName ?? __instance.GetType().Name;
         var methodName = __originalMethod.Name;
         var isGeneratedSteamInput = SteamControllerInputSelection.IsGeneratedInputEvent(inputEvent);
+        var isSelectedControllerActive = LocalCoopInputRouter.IsSelectedControllerActive(clientAssignment);
+        if (ShouldRetrySteamSelectionFromInputBoundary(
+            typeName,
+            methodName,
+            inputEvent,
+            configuredControllerAssignment,
+            isSelectedControllerActive))
+        {
+            LocalCoopInputRouter.TryApplyControllerSelectionToRememberedStrategy(
+                clientAssignment,
+                message => new BrokerEventLog(settings.EventLogPath).Write(message));
+            isSelectedControllerActive = LocalCoopInputRouter.IsSelectedControllerActive(clientAssignment);
+        }
+
+        var controllerAssignment = LocalCoopInputRouter.ResolveEffectiveControllerDevice(clientAssignment);
         var isSelectedSteamControllerBoundary = ShouldTrustSelectedSteamControllerBoundary(
             typeName,
             methodName,
             inputEvent,
-            controllerAssignment,
+            configuredControllerAssignment,
             isGeneratedSteamInput);
         if (isSelectedSteamControllerBoundary)
         {
@@ -83,7 +144,7 @@ public static class ControllerInputOwnershipPatches
             typeName,
             methodName,
             inputEvent,
-            controllerAssignment,
+            configuredControllerAssignment,
             isGeneratedSteamInput);
         if (isSelectedOriginalSteamControllerBoundary)
         {
@@ -100,12 +161,11 @@ public static class ControllerInputOwnershipPatches
             return true;
         }
 
-        var isSelectedControllerActive = LocalCoopInputRouter.IsSelectedControllerActive(clientAssignment);
         if (ShouldSuppressNativeControllerInputForSelectedSteamController(
             typeName,
             methodName,
             inputEvent,
-            controllerAssignment,
+            configuredControllerAssignment,
             isSelectedControllerActive))
         {
             var nativeDuplicateResult = ControllerInputOwnership.ShouldProcess(inputEvent, controllerAssignment) with
@@ -127,7 +187,7 @@ public static class ControllerInputOwnershipPatches
             typeName,
             methodName,
             inputEvent,
-            controllerAssignment,
+            configuredControllerAssignment,
             isGeneratedSteamInput);
         if (shouldBridgeSelectedSteamInput)
         {
@@ -166,7 +226,7 @@ public static class ControllerInputOwnershipPatches
             typeName,
             methodName,
             inputEvent,
-            controllerAssignment,
+            configuredControllerAssignment,
             isGeneratedSteamInput);
         if (shouldAllowSelectedSteamInputThroughNonAuthoritativeSink)
         {
@@ -193,17 +253,19 @@ public static class ControllerInputOwnershipPatches
             && SteamControllerInputSelection.TryConsumeGeneratedNativeInputEvent(inputEvent);
         var isGeneratedOriginalSteamInput = ShouldConsumeGeneratedOriginalSteamInputAtSink(typeName, methodName)
             && SteamControllerInputSelection.TryConsumeGeneratedOriginalSteamControllerInput(inputEvent);
+        var isGeneratedNativeFallbackInput = ShouldConsumeGeneratedNativeActionAtSink(typeName, methodName)
+            && LocalCoopInputRouter.TryConsumeNativeFallbackGeneratedInput(inputEvent, controllerAssignment);
         var isSelectedSteamInput = ShouldTrustSelectedSteamInputAtSink(
             typeName,
             methodName,
             inputEvent,
-            controllerAssignment,
+            configuredControllerAssignment,
             isGeneratedSteamInput || isGeneratedOriginalSteamInput);
 
         var result = ControllerInputOwnership.ShouldProcess(
             inputEvent,
             controllerAssignment,
-            isGeneratedUiCompanionInput || isGeneratedNativeInput || isSelectedSteamInput);
+            isGeneratedUiCompanionInput || isGeneratedNativeInput || isGeneratedNativeFallbackInput || isSelectedSteamInput);
         if (!result.IsControllerInput)
         {
             return true;
@@ -211,14 +273,18 @@ public static class ControllerInputOwnershipPatches
 
         if (result.ShouldProcess)
         {
+            LocalCoopInputRouter.ObserveNativeFallbackSource(inputEvent, controllerAssignment);
             LogAllowedIfUseful(
                 settings,
                 inputEvent,
                 result,
                 __instance,
                 __originalMethod,
-                isGeneratedOriginalSteamInput || isGeneratedNativeInput,
-                FormatGeneratedInputSuffix(isGeneratedOriginalSteamInput, isGeneratedNativeInput));
+                isGeneratedOriginalSteamInput || isGeneratedNativeInput || isGeneratedNativeFallbackInput,
+                FormatGeneratedInputSuffix(
+                    isGeneratedOriginalSteamInput,
+                    isGeneratedNativeInput,
+                    isGeneratedNativeFallbackInput));
             return true;
         }
 
@@ -229,8 +295,45 @@ public static class ControllerInputOwnershipPatches
             result,
             __instance,
             __originalMethod,
-            suffix: $"generatedSteamInput={isGeneratedSteamInput} generatedOriginalSteamInput={isGeneratedOriginalSteamInput} generatedNativeInput={isGeneratedNativeInput}");
+            suffix: $"generatedSteamInput={isGeneratedSteamInput} generatedOriginalSteamInput={isGeneratedOriginalSteamInput} generatedNativeInput={isGeneratedNativeInput} generatedNativeFallbackInput={isGeneratedNativeFallbackInput}");
         return false;
+    }
+
+    public static void Postfix(MethodBase __originalMethod, object __instance, object[] __args)
+    {
+        if (!DynamicControllerCoordinator.IsEnabled)
+        {
+            return;
+        }
+
+        var inputEvent = __args.FirstOrDefault();
+        if (inputEvent is null || !SteamControllerInputSelection.IsGeneratedInputEvent(inputEvent))
+        {
+            return;
+        }
+
+        var instanceTypeName = __instance.GetType().FullName ?? __instance.GetType().Name;
+        var settings = LoadSettings();
+
+        if (!string.Equals(instanceTypeName, "MegaCrit.Sts2.Core.Nodes.CommonUi.NControllerManager", StringComparison.Ordinal)
+            || !string.Equals(__originalMethod.Name, "_Input", StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var dispatched = DynamicControllerInputBridge.DispatchMappedActions(inputEvent);
+        if (dispatched == 0)
+        {
+            return;
+        }
+
+        if (settings.Enabled)
+        {
+            new BrokerEventLog(settings.EventLogPath).Write(
+                $"Dynamic controller input mapped after controller manager: dispatched={dispatched}.");
+        }
+
+        MarkInputHandled(__instance, inputEvent);
     }
 
     public static string FormatControllerOwnershipLogLineForTesting(
@@ -345,6 +448,21 @@ public static class ControllerInputOwnershipPatches
             selectedControllerActive);
     }
 
+    public static bool ShouldRetrySteamSelectionFromInputBoundaryForTesting(
+        string typeName,
+        string methodName,
+        object? inputEvent,
+        BrokerControllerDeviceAssignment assignment,
+        bool selectedControllerActive)
+    {
+        return ShouldRetrySteamSelectionFromInputBoundary(
+            typeName,
+            methodName,
+            inputEvent,
+            assignment,
+            selectedControllerActive);
+    }
+
     public static bool ShouldLogSuppressedControllerInputForTesting(
         object? inputEvent,
         bool includeUnpressed = false)
@@ -377,6 +495,19 @@ public static class ControllerInputOwnershipPatches
             && IsAssignedSelectedSteamDevice(assignment)
             && IsControllerManagerObserver(typeName, methodName)
             && SteamControllerInputSelection.CanTrustOriginalSteamControllerInput(inputEvent);
+    }
+
+    private static bool ShouldRetrySteamSelectionFromInputBoundary(
+        string typeName,
+        string methodName,
+        object? inputEvent,
+        BrokerControllerDeviceAssignment assignment,
+        bool selectedControllerActive)
+    {
+        return !selectedControllerActive
+            && IsAssignedSelectedSteamDevice(assignment)
+            && IsRealInputSink(typeName, methodName)
+            && IsNativeJoypadInput(inputEvent);
     }
 
     private static bool ShouldConsumeGeneratedUiCompanionAtSink(
@@ -463,7 +594,7 @@ public static class ControllerInputOwnershipPatches
     {
         return selectedControllerActive
             && IsAssignedSelectedSteamDevice(assignment)
-            && IsGlobalMenuSink(typeName, methodName)
+            && IsRealInputSink(typeName, methodName)
             && IsNativeJoypadInput(inputEvent);
     }
 
@@ -626,14 +757,17 @@ public static class ControllerInputOwnershipPatches
             : IsPressedInput(inputEvent);
     }
 
-    private static string? FormatGeneratedInputSuffix(bool isGeneratedOriginalSteamInput, bool isGeneratedNativeInput)
+    private static string? FormatGeneratedInputSuffix(
+        bool isGeneratedOriginalSteamInput,
+        bool isGeneratedNativeInput,
+        bool isGeneratedNativeFallbackInput)
     {
-        if (!isGeneratedOriginalSteamInput && !isGeneratedNativeInput)
+        if (!isGeneratedOriginalSteamInput && !isGeneratedNativeInput && !isGeneratedNativeFallbackInput)
         {
             return null;
         }
 
-        return $"generatedOriginalSteamInput={isGeneratedOriginalSteamInput} generatedNativeInput={isGeneratedNativeInput}";
+        return $"generatedOriginalSteamInput={isGeneratedOriginalSteamInput} generatedNativeInput={isGeneratedNativeInput} generatedNativeFallbackInput={isGeneratedNativeFallbackInput}";
     }
 
     private static string FormatCanonicalDeliverySuffix(CanonicalInputDelivery delivery)

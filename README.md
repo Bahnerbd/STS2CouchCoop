@@ -36,14 +36,14 @@ Slay the Spire 2\mods\LocalCoop\LocalCoop.json
 Open PowerShell in `Slay the Spire 2\mods\LocalCoop` and run:
 
 ```powershell
-.\Start-LocalCoopClients.ps1 -ClientCount 4 -ControllerDevices '0,1,2,3'
+.\Start-LocalCoopClients.ps1 -ClientCount 4
 ```
 
 For two or three clients, use:
 
 ```powershell
-.\Start-LocalCoopClients.ps1 -ClientCount 2 -ControllerDevices '0,1'
-.\Start-LocalCoopClients.ps1 -ClientCount 3 -ControllerDevices '0,1,2'
+.\Start-LocalCoopClients.ps1 -ClientCount 2
+.\Start-LocalCoopClients.ps1 -ClientCount 3
 ```
 
 Convenience launchers are also included:
@@ -85,13 +85,15 @@ Packaged launches write generated configs and broker logs under:
 If PowerShell blocks the launcher, open PowerShell from the LocalCoop folder and run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\Start-LocalCoopClients.ps1 -ClientCount 2 -ControllerDevices '0,1'
+powershell -ExecutionPolicy Bypass -File .\Start-LocalCoopClients.ps1 -ClientCount 2
 ```
+
+Controllers are detected after the developer logo and assigned automatically from Steam Input's stable session inventory. Device numbers, controller brands, and connection order in Godot are not used as player ownership. Every client warms Steam action data in standby, and collector handoff waits for stable focus and usable actions before transferring input.
 
 If controller assignment looks wrong, start with two clients and two controllers:
 
 ```powershell
-.\Start-LocalCoopClients.ps1 -ClientCount 2 -ControllerDevices '0,1'
+.\Start-LocalCoopClients.ps1 -ClientCount 2
 ```
 
 To uninstall, delete:

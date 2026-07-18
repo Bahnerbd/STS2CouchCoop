@@ -60,6 +60,29 @@ public sealed class BrokerTcpServerTests
     }
 
     [TestMethod]
+    public async Task RejectsIncompatibleProtocolVersionWithClearReason()
+    {
+        await using var server = new BrokerTcpServer("local-test", IPAddress.Loopback, port: 0);
+        await server.StartAsync(CancellationToken.None);
+        using var client = new TcpClient();
+        await client.ConnectAsync(IPAddress.Loopback, server.Port);
+
+        await BrokerFrameCodec.WriteAsync(
+            client.GetStream(),
+            BrokerTransportMessage.ForRegistration(new BrokerClientRegistrationDto(
+                "client-0",
+                BrokerClientRole.Host,
+                0,
+                ProtocolVersion: BrokerProtocol.CurrentVersion - 1)),
+            CancellationToken.None);
+        var rejected = await BrokerFrameCodec.ReadAsync(client.GetStream(), CancellationToken.None);
+
+        Assert.AreEqual(BrokerTransportMessageKind.RegistrationRejected, rejected?.Kind);
+        StringAssert.Contains(rejected?.RegistrationRejected?.Reason, "expected");
+        StringAssert.Contains(rejected?.RegistrationRejected?.Reason, BrokerProtocol.CurrentVersion.ToString());
+    }
+
+    [TestMethod]
     public async Task AllowsClientIndexToReconnectAfterDisconnect()
     {
         await using var server = new BrokerTcpServer("local-test", IPAddress.Loopback, port: 0);

@@ -24,7 +24,13 @@ public sealed class LocalCoopPatchInstallerTests
                 typeof(LocalCoop.Mod.Patches.BrokerPlayerDisplayNameNameplatePatch),
                 typeof(LocalCoop.Mod.Patches.BaseLibHealthBarForecastCompatibilityPatch),
                 typeof(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches),
-                typeof(LocalCoop.Mod.Patches.ControllerInputOwnershipPatches)
+                typeof(LocalCoop.Mod.Patches.DynamicControllerStartupPatches),
+                typeof(LocalCoop.Mod.Patches.SteamControllerInputFramePatches),
+                typeof(LocalCoop.Mod.Patches.ControllerInputBackgroundPollingPatches),
+                typeof(LocalCoop.Mod.Patches.DynamicControllerInputFocusScopePatch),
+                typeof(LocalCoop.Mod.Patches.DynamicControllerFocusedWindowPatch),
+                typeof(LocalCoop.Mod.Patches.ControllerInputOwnershipPatches),
+                typeof(LocalCoop.Mod.Patches.SteamControllerInputRuntimeDiagnosticsPatches)
             },
             LocalCoopPatchInstaller.DefaultPatchTypesForTesting.ToArray());
     }
@@ -40,7 +46,8 @@ public sealed class LocalCoopPatchInstallerTests
     public void DefaultPatchTypesDoNotContainDiagnosticsPatches()
     {
         Assert.IsFalse(LocalCoopPatchInstaller.DefaultPatchTypesForTesting.Any(type =>
-            type.Name.Contains("Diagnostics", StringComparison.Ordinal)
+            type != typeof(LocalCoop.Mod.Patches.SteamControllerInputRuntimeDiagnosticsPatches)
+            && type.Name.Contains("Diagnostics", StringComparison.Ordinal)
             || type.Name.Contains("Probe", StringComparison.Ordinal)
             || type.Name.Contains("Breadcrumb", StringComparison.Ordinal)));
     }
@@ -112,6 +119,50 @@ public sealed class LocalCoopPatchInstallerTests
             defaultAutoConfig));
         Assert.IsFalse(LocalCoop.Mod.Patches.SteamControllerInputSelectionPatches.ShouldReplaceNativeUpdateControllerConnectionsForTesting(
             disabled));
+    }
+
+    [TestMethod]
+    public void ControllerInputBackgroundPollingRunsOnlyForAssignedUnfocusedBrokerClient()
+    {
+        var settings = new BrokerModeSettings(
+            Enabled: true,
+            Config: new BrokerClientConfig(
+                BrokerClientRole.Client,
+                ClientIndex: 1,
+                Host: "127.0.0.1",
+                Port: 38989,
+                SessionId: "local-test",
+                ControllerDevice: BrokerControllerDeviceAssignment.ForDevice(1)),
+            ClientId: "client-1",
+            EventLogPath: "events.txt",
+            FailureReason: null);
+        var assignment = LocalCoopInputRouter.ResolveAssignment(settings.Config!);
+
+        Assert.IsFalse(LocalCoop.Mod.Patches.ControllerInputBackgroundPollingPatches.ShouldPollInBackgroundForTesting(
+            settings,
+            assignment,
+            isFocused: false));
+        Assert.IsFalse(LocalCoop.Mod.Patches.ControllerInputBackgroundPollingPatches.ShouldPollInBackgroundForTesting(
+            settings,
+            assignment,
+            isFocused: true));
+        Assert.IsFalse(LocalCoop.Mod.Patches.ControllerInputBackgroundPollingPatches.ShouldPollInBackgroundForTesting(
+            settings with { Enabled = false },
+            assignment,
+            isFocused: false));
+    }
+
+    [TestMethod]
+    public void SteamControllerSelectionRetryIsThrottled()
+    {
+        var now = DateTimeOffset.UtcNow;
+        LocalCoop.Mod.Patches.SteamControllerInputFramePatches.ResetSelectionRetryForTesting();
+
+        Assert.IsTrue(LocalCoop.Mod.Patches.SteamControllerInputFramePatches.TryBeginSelectionRetryForTesting(now));
+        Assert.IsFalse(LocalCoop.Mod.Patches.SteamControllerInputFramePatches.TryBeginSelectionRetryForTesting(
+            now.AddMilliseconds(999)));
+        Assert.IsTrue(LocalCoop.Mod.Patches.SteamControllerInputFramePatches.TryBeginSelectionRetryForTesting(
+            now.AddSeconds(1)));
     }
 
     [TestMethod]

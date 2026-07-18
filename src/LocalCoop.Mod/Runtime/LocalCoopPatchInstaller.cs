@@ -19,7 +19,13 @@ public static class LocalCoopPatchInstaller
         typeof(BrokerPlayerDisplayNameNameplatePatch),
         typeof(BaseLibHealthBarForecastCompatibilityPatch),
         typeof(SteamControllerInputSelectionPatches),
-        typeof(ControllerInputOwnershipPatches)
+        typeof(DynamicControllerStartupPatches),
+        typeof(SteamControllerInputFramePatches),
+        typeof(ControllerInputBackgroundPollingPatches),
+        typeof(DynamicControllerInputFocusScopePatch),
+        typeof(DynamicControllerFocusedWindowPatch),
+        typeof(ControllerInputOwnershipPatches),
+        typeof(SteamControllerInputRuntimeDiagnosticsPatches)
     ];
 
     private static readonly Type[] RunIdentityDiagnosticsPatchTypes =

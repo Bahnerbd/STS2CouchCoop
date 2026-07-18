@@ -2,9 +2,14 @@ namespace LocalCoop.Mod.Runtime;
 
 public sealed class BrokerClientEnvelopeTransport : IBrokerEnvelopeTransport
 {
-    private readonly BrokerClientConnection _connection;
+    private readonly BrokerSharedConnection _connection;
 
     public BrokerClientEnvelopeTransport(BrokerClientConnection connection)
+        : this(new BrokerSharedConnection(connection))
+    {
+    }
+
+    public BrokerClientEnvelopeTransport(BrokerSharedConnection connection)
     {
         _connection = connection;
     }
@@ -24,6 +29,6 @@ public sealed class BrokerClientEnvelopeTransport : IBrokerEnvelopeTransport
 
     public Task<BrokerEnvelope?> ReceiveEnvelopeAsync(CancellationToken cancellationToken)
     {
-        return _connection.ReadEnvelopeAsync(cancellationToken);
+        return _connection.ReceiveGameplayEnvelopeAsync(cancellationToken);
     }
 }

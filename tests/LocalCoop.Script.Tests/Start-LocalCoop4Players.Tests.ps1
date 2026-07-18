@@ -17,8 +17,8 @@ if ($scriptContent -notmatch '-ClientCount\s+4') {
     throw 'Four-player launcher should pass -ClientCount 4.'
 }
 
-if ($scriptContent -notmatch '-ControllerDevices\s+"0,1,2,3"') {
-    throw 'Four-player launcher should pass the default four-controller assignment.'
+if ($scriptContent -match '-ControllerDevices') {
+    throw 'Four-player launcher should request dynamic controller assignment without fixed device indices.'
 }
 
 if ($scriptContent -notmatch '%~dp0') {

@@ -29,6 +29,15 @@ public sealed class BrokerTransportMessageTests
     }
 
     [TestMethod]
+    public void CreatesRegistrationRejectedMessage()
+    {
+        var message = BrokerTransportMessage.ForRegistrationRejected("version mismatch");
+
+        Assert.AreEqual(BrokerTransportMessageKind.RegistrationRejected, message.Kind);
+        Assert.AreEqual("version mismatch", message.RegistrationRejected?.Reason);
+    }
+
+    [TestMethod]
     public void TransportKindsCoverRegistrationEnvelopeAndPeerControl()
     {
         CollectionAssert.AreEquivalent(
@@ -36,9 +45,41 @@ public sealed class BrokerTransportMessageTests
             {
                 BrokerTransportMessageKind.Registration,
                 BrokerTransportMessageKind.RegistrationAccepted,
+                BrokerTransportMessageKind.RegistrationRejected,
                 BrokerTransportMessageKind.Envelope,
                 BrokerTransportMessageKind.PeerRegistered
             },
             Enum.GetValues<BrokerTransportMessageKind>());
+    }
+
+    [TestMethod]
+    public void ControllerStatusRoundTripsWarmStandbyReadiness()
+    {
+        var status = new CollectorStatusMessage(
+            ClientIndex: 2,
+            WindowFocused: true,
+            SteamReady: true,
+            LogoReady: true,
+            ControllerEnabled: true,
+            ControllerClientCount: 4,
+            ActionDataReady: true,
+            ConnectedControllerCount: 4,
+            ActiveDigitalActionCount: 60,
+            DigitalActionQueryCount: 60,
+            ActiveAnalogActionCount: 4,
+            AnalogActionQueryCount: 4);
+        var envelope = new BrokerEnvelope(
+            "local-test",
+            "client-2",
+            null,
+            ControllerControlMessageTypes.CollectorStatus,
+            ControllerControlMessageSerializer.Serialize(status),
+            1);
+
+        var parsed = ControllerControlMessageSerializer.Deserialize<CollectorStatusMessage>(envelope);
+
+        Assert.AreEqual(status, parsed);
+        Assert.IsTrue(parsed.ActionDataReady);
+        Assert.AreEqual(60, parsed.ActiveDigitalActionCount);
     }
 }

@@ -67,8 +67,39 @@ public static class ControllerInputOwnership
     public static string FormatLogLine(ControllerInputOwnershipResult result, object? inputEvent)
     {
         var action = GetPropertyValue(inputEvent, "Action");
-        var suffix = action is null ? string.Empty : $" action={action}";
-        return $"Controller input ownership: {(result.ShouldProcess ? "allowed" : "suppressed")} device={result.Device?.ToString() ?? "<none>"}{suffix} reason={result.Reason}.";
+        var actionSuffix = action is null ? string.Empty : $" action={action}";
+        var detailSuffix = FormatInputDetails(inputEvent);
+        return $"Controller input ownership: {(result.ShouldProcess ? "allowed" : "suppressed")} device={result.Device?.ToString() ?? "<none>"}{actionSuffix}{detailSuffix} reason={result.Reason}.";
+    }
+
+    private static string FormatInputDetails(object? inputEvent)
+    {
+        if (inputEvent is null)
+        {
+            return string.Empty;
+        }
+
+        var parts = new List<string>();
+        AppendProperty(parts, inputEvent, "ButtonIndex", "button");
+        AppendProperty(parts, inputEvent, "Axis", "axis");
+        AppendProperty(parts, inputEvent, "AxisValue", "axisValue");
+        AppendProperty(parts, inputEvent, "Pressed", "pressed");
+        return parts.Count == 0
+            ? string.Empty
+            : $" {string.Join(" ", parts)}";
+    }
+
+    private static void AppendProperty(
+        List<string> parts,
+        object inputEvent,
+        string propertyName,
+        string label)
+    {
+        var value = GetPropertyValue(inputEvent, propertyName);
+        if (value is not null)
+        {
+            parts.Add($"{label}={value}");
+        }
     }
 
     private static bool TryGetControllerDevice(object inputEvent, out int device)

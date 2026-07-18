@@ -7,6 +7,7 @@ namespace LocalCoop.Broker;
 public sealed class BrokerTcpServer : IAsyncDisposable
 {
     private readonly InMemoryBrokerSession _session;
+    private readonly ControllerSessionCoordinator _controllerCoordinator;
     private readonly TcpListener _listener;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly Dictionary<string, BrokerClientPipe> _pipesByClientId = new(StringComparer.Ordinal);
@@ -19,6 +20,7 @@ public sealed class BrokerTcpServer : IAsyncDisposable
     public BrokerTcpServer(string sessionId, IPAddress address, int port, Action<string>? log = null)
     {
         _session = new InMemoryBrokerSession(sessionId);
+        _controllerCoordinator = new ControllerSessionCoordinator(sessionId, log);
         _listener = new TcpListener(address, port);
         _log = log;
     }
@@ -113,6 +115,16 @@ public sealed class BrokerTcpServer : IAsyncDisposable
                     }
 
                     var registration = BrokerClientRegistration.FromDto(message.Registration);
+                    if (message.Registration.ProtocolVersion != BrokerProtocol.CurrentVersion)
+                    {
+                        var reason = $"Unsupported broker protocol version {message.Registration.ProtocolVersion}; expected {BrokerProtocol.CurrentVersion}.";
+                        _log?.Invoke($"Broker registration rejected: client={message.Registration.ClientId} reason={reason}");
+                        await BrokerFrameCodec.WriteAsync(
+                            stream,
+                            BrokerTransportMessage.ForRegistrationRejected(reason),
+                            cancellationToken);
+                        return;
+                    }
                     IReadOnlyList<BrokerRoute> ready;
                     IReadOnlyList<BrokerClientRegistrationDto> connectedPeers;
                     IReadOnlyList<BrokerTransportRoute> peerNotifications;
@@ -165,6 +177,14 @@ public sealed class BrokerTcpServer : IAsyncDisposable
 
                     DropPendingForDisconnectedClient(clientId);
                     _session.Unregister(clientId);
+                    var controllerRoutes = _controllerCoordinator.ClientDisconnected(
+                        clientId,
+                        _session.Clients,
+                        DateTimeOffset.UtcNow);
+                    if (controllerRoutes.Count > 0)
+                    {
+                        _ = DeliverAsync(controllerRoutes, CancellationToken.None);
+                    }
                 }
             }
         }
@@ -176,6 +196,11 @@ public sealed class BrokerTcpServer : IAsyncDisposable
         {
             var source = _session.FindClient(envelope.SourceClientId)
                 ?? throw new InvalidOperationException($"source client '{envelope.SourceClientId}' is not registered.");
+
+            if (ControllerControlMessageTypes.IsControllerControl(envelope.MessageType))
+            {
+                return _controllerCoordinator.Handle(envelope, _session.Clients, DateTimeOffset.UtcNow);
+            }
 
             if (envelope.TargetClientId is not null)
             {

@@ -33,8 +33,14 @@ public sealed class LocalCoopInputRouterTests
             CanonicalInputAction.Down,
             LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("controller_d_pad_south", device: 0)));
         Assert.AreEqual(
-            CanonicalInputAction.Confirm,
+            CanonicalInputAction.Select,
             LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("controller_face_button_south", device: 0)));
+        Assert.AreEqual(
+            CanonicalInputAction.Confirm,
+            LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("controller_face_button_north", device: 0)));
+        Assert.AreEqual(
+            CanonicalInputAction.TopPanel,
+            LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("controller_face_button_west", device: 0)));
         Assert.AreEqual(
             CanonicalInputAction.TabLeft,
             LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("controller_left_bumper", device: 0)));
@@ -44,6 +50,15 @@ public sealed class LocalCoopInputRouterTests
         Assert.AreEqual(
             CanonicalInputAction.Settings,
             LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("controller_start_button", device: 0)));
+        Assert.AreEqual(
+            CanonicalInputAction.Map,
+            LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("controller_select_button", device: 0)));
+        Assert.AreEqual(
+            CanonicalInputAction.Map,
+            LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("ui_controller_touch_pad", device: 0)));
+        Assert.AreEqual(
+            CanonicalInputAction.Peek,
+            LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("controller_joystick_press", device: 0)));
         Assert.IsNull(LocalCoopInputRouter.TryMapCanonicalAction(new FakeInputEventAction("ui_down", device: 0)));
     }
 
@@ -70,6 +85,52 @@ public sealed class LocalCoopInputRouterTests
         Assert.AreEqual(1, Godot.Input.Parsed.Count);
         var parsed = (ParsedInputEvent)Godot.Input.Parsed[0];
         Assert.AreEqual("ui_down", parsed.Action);
+        Assert.IsTrue(SteamControllerInputSelection.TryConsumeGeneratedUiCompanionInputEvent(parsed));
+    }
+
+    [TestMethod]
+    public void DeliversSteamSouthButtonThroughUiSelectForPatchedControllerMap()
+    {
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        Godot.Input.Parsed.Clear();
+        var sink = new RecordingSink();
+        var method = typeof(RecordingSink).GetMethod(nameof(RecordingSink.Handle), BindingFlags.Instance | BindingFlags.Public)!;
+
+        var delivered = LocalCoopInputRouter.TryDeliverCanonicalInputToSink(
+            sink,
+            method,
+            new ParsedInputEvent("controller_face_button_south", device: 0),
+            out var delivery);
+
+        Assert.IsTrue(delivered);
+        Assert.IsTrue(delivery.Delivered);
+        Assert.AreEqual(CanonicalInputAction.Select, delivery.CanonicalAction);
+        Assert.AreEqual("ui_select", delivery.TargetAction);
+        var parsed = (ParsedInputEvent)Godot.Input.Parsed[0];
+        Assert.AreEqual("ui_select", parsed.Action);
+        Assert.IsTrue(SteamControllerInputSelection.TryConsumeGeneratedUiCompanionInputEvent(parsed));
+    }
+
+    [TestMethod]
+    public void DeliversSteamNorthButtonThroughUiAcceptForPatchedControllerMap()
+    {
+        SteamControllerInputSelection.ClearGeneratedInputEventsForTesting();
+        Godot.Input.Parsed.Clear();
+        var sink = new RecordingSink();
+        var method = typeof(RecordingSink).GetMethod(nameof(RecordingSink.Handle), BindingFlags.Instance | BindingFlags.Public)!;
+
+        var delivered = LocalCoopInputRouter.TryDeliverCanonicalInputToSink(
+            sink,
+            method,
+            new ParsedInputEvent("controller_face_button_north", device: 0),
+            out var delivery);
+
+        Assert.IsTrue(delivered);
+        Assert.IsTrue(delivery.Delivered);
+        Assert.AreEqual(CanonicalInputAction.Confirm, delivery.CanonicalAction);
+        Assert.AreEqual("ui_accept", delivery.TargetAction);
+        var parsed = (ParsedInputEvent)Godot.Input.Parsed[0];
+        Assert.AreEqual("ui_accept", parsed.Action);
         Assert.IsTrue(SteamControllerInputSelection.TryConsumeGeneratedUiCompanionInputEvent(parsed));
     }
 

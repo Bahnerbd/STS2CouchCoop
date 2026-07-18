@@ -12,6 +12,7 @@ public sealed class BrokerClientConnection : IAsyncDisposable
     private readonly NetworkStream _stream;
     private readonly List<BrokerClientRegistrationInfo> _connectedPeers = [];
     private readonly object _connectedPeersGate = new();
+    private readonly SemaphoreSlim _writeGate = new(1, 1);
 
     private BrokerClientConnection(TcpClient client)
     {
@@ -38,9 +39,17 @@ public sealed class BrokerClientConnection : IAsyncDisposable
             cancellationToken).ConfigureAwait(false);
 
         var accepted = await connection.ReadTransportMessageAsync(cancellationToken).ConfigureAwait(false);
+        if (accepted?.Kind == BrokerTransportMessageKind.RegistrationRejected)
+        {
+            await connection.DisposeAsync();
+            throw new InvalidDataException(
+                $"Broker registration rejected: {accepted.RegistrationRejected?.Reason ?? "unknown reason"}");
+        }
+
         if (accepted?.Kind != BrokerTransportMessageKind.RegistrationAccepted
             || accepted.RegistrationAccepted?.ClientId != clientId
-            || accepted.RegistrationAccepted.SessionId != config.SessionId)
+            || accepted.RegistrationAccepted.SessionId != config.SessionId
+            || accepted.RegistrationAccepted.ProtocolVersion != BrokerProtocol.CurrentVersion)
         {
             await connection.DisposeAsync();
             throw new InvalidDataException("Broker did not accept registration for the requested client.");
@@ -94,6 +103,7 @@ public sealed class BrokerClientConnection : IAsyncDisposable
 
     public ValueTask DisposeAsync()
     {
+        _writeGate.Dispose();
         _stream.Dispose();
         _client.Dispose();
         return ValueTask.CompletedTask;
@@ -128,12 +138,20 @@ public sealed class BrokerClientConnection : IAsyncDisposable
 
     private async Task WriteAsync(BrokerTransportMessage message, CancellationToken cancellationToken)
     {
-        var payload = JsonSerializer.SerializeToUtf8Bytes(message, JsonOptions);
-        var lengthPrefix = new byte[4];
-        BinaryPrimitives.WriteInt32BigEndian(lengthPrefix, payload.Length);
-        await _stream.WriteAsync(lengthPrefix, cancellationToken).ConfigureAwait(false);
-        await _stream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
-        await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        await _writeGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var payload = JsonSerializer.SerializeToUtf8Bytes(message, JsonOptions);
+            var lengthPrefix = new byte[4];
+            BinaryPrimitives.WriteInt32BigEndian(lengthPrefix, payload.Length);
+            await _stream.WriteAsync(lengthPrefix, cancellationToken).ConfigureAwait(false);
+            await _stream.WriteAsync(payload, cancellationToken).ConfigureAwait(false);
+            await _stream.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            _writeGate.Release();
+        }
     }
 
     private async Task<BrokerTransportMessage?> ReadTransportMessageAsync(CancellationToken cancellationToken)
@@ -188,6 +206,7 @@ public sealed class BrokerClientConnection : IAsyncDisposable
     {
         Registration,
         RegistrationAccepted,
+        RegistrationRejected,
         Envelope,
         PeerRegistered
     }
@@ -196,6 +215,7 @@ public sealed class BrokerClientConnection : IAsyncDisposable
         BrokerTransportMessageKind Kind,
         BrokerClientRegistrationInfo? Registration,
         BrokerRegistrationAccepted? RegistrationAccepted,
+        BrokerRegistrationRejected? RegistrationRejected,
         BrokerEnvelope? Envelope,
         BrokerClientRegistrationInfo? PeerRegistration)
     {
@@ -205,6 +225,7 @@ public sealed class BrokerClientConnection : IAsyncDisposable
                 BrokerTransportMessageKind.Registration,
                 registration,
                 RegistrationAccepted: null,
+                RegistrationRejected: null,
                 Envelope: null,
                 PeerRegistration: null);
         }
@@ -215,10 +236,13 @@ public sealed class BrokerClientConnection : IAsyncDisposable
                 BrokerTransportMessageKind.Envelope,
                 Registration: null,
                 RegistrationAccepted: null,
+                RegistrationRejected: null,
                 envelope,
                 PeerRegistration: null);
         }
     }
+
+    private sealed record BrokerRegistrationRejected(string Reason);
 
     private sealed record BrokerRegistrationAccepted
     {
@@ -226,11 +250,13 @@ public sealed class BrokerClientConnection : IAsyncDisposable
         public BrokerRegistrationAccepted(
             string clientId,
             string sessionId,
-            IReadOnlyList<BrokerClientRegistrationInfo>? connectedPeers = null)
+            IReadOnlyList<BrokerClientRegistrationInfo>? connectedPeers = null,
+            int protocolVersion = BrokerProtocol.CurrentVersion)
         {
             ClientId = clientId;
             SessionId = sessionId;
             ConnectedPeers = connectedPeers ?? [];
+            ProtocolVersion = protocolVersion;
         }
 
         public string ClientId { get; init; }
@@ -238,5 +264,7 @@ public sealed class BrokerClientConnection : IAsyncDisposable
         public string SessionId { get; init; }
 
         public IReadOnlyList<BrokerClientRegistrationInfo> ConnectedPeers { get; init; }
+
+        public int ProtocolVersion { get; init; }
     }
 }

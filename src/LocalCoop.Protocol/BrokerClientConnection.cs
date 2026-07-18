@@ -36,9 +36,17 @@ public sealed class BrokerClientConnection : IAsyncDisposable
             cancellationToken);
 
         var accepted = await BrokerFrameCodec.ReadAsync(connection._stream, cancellationToken);
+        if (accepted?.Kind == BrokerTransportMessageKind.RegistrationRejected)
+        {
+            await connection.DisposeAsync();
+            throw new InvalidDataException(
+                $"Broker registration rejected: {accepted.RegistrationRejected?.Reason ?? "unknown reason"}");
+        }
+
         if (accepted?.Kind != BrokerTransportMessageKind.RegistrationAccepted
             || accepted.RegistrationAccepted?.ClientId != clientId
-            || accepted.RegistrationAccepted.SessionId != config.SessionId)
+            || accepted.RegistrationAccepted.SessionId != config.SessionId
+            || accepted.RegistrationAccepted.ProtocolVersion != BrokerProtocol.CurrentVersion)
         {
             await connection.DisposeAsync();
             throw new InvalidDataException("Broker did not accept registration for the requested client.");

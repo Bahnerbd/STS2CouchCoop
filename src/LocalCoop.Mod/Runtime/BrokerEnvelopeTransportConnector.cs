@@ -24,7 +24,10 @@ public static class BrokerEnvelopeTransportConnector
 
         try
         {
-            var connection = await BrokerClientConnection.ConnectAsync(config, clientId, timeoutSource.Token)
+            var connection = await BrokerSharedConnectionRegistry.GetOrConnectAsync(
+                    config,
+                    clientId,
+                    timeoutSource.Token)
                 .ConfigureAwait(false);
             return new BrokerClientEnvelopeTransport(connection);
         }

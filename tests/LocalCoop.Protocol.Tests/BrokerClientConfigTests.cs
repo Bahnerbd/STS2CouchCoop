@@ -75,8 +75,8 @@ public sealed class BrokerClientConfigTests
             sessionId=local-test
             """);
 
-        Assert.IsTrue(config.ControllerDevice.IsConfigured);
-        Assert.AreEqual(1, config.ControllerDevice.Device);
+        Assert.IsFalse(config.ControllerDevice.IsConfigured);
+        Assert.IsNull(config.ControllerDevice.Device);
     }
 
     [TestMethod]
@@ -95,8 +95,8 @@ public sealed class BrokerClientConfigTests
         Assert.AreEqual(3, config.PlayerSlot);
         Assert.AreEqual(BrokerClientInputMode.Auto, config.InputMode);
         Assert.AreEqual(3, config.ControllerClientCount);
-        Assert.IsTrue(config.ControllerDevice.IsConfigured);
-        Assert.AreEqual(3, config.ControllerDevice.Device);
+        Assert.IsFalse(config.ControllerDevice.IsConfigured);
+        Assert.IsNull(config.ControllerDevice.Device);
     }
 
     [TestMethod]
@@ -174,8 +174,8 @@ public sealed class BrokerClientConfigTests
 
         Assert.AreEqual(1, config.PlayerSlot);
         Assert.AreEqual(BrokerClientInputMode.Auto, config.InputMode);
-        Assert.IsTrue(config.ControllerDevice.IsConfigured);
-        Assert.AreEqual(1, config.ControllerDevice.Device);
+        Assert.IsFalse(config.ControllerDevice.IsConfigured);
+        Assert.IsNull(config.ControllerDevice.Device);
     }
 
     [TestMethod]

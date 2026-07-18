@@ -5,6 +5,9 @@ namespace LocalCoop.Mod.Runtime;
 
 public static class LocalCoopInputRouter
 {
+    private static readonly object StrategyLock = new();
+    private static WeakReference<object>? _steamInputStrategy;
+
     public static ClientControllerAssignment ResolveAssignment(BrokerClientConfig config)
     {
         var assignment = ControllerAssignmentService.Resolve(config);
@@ -29,6 +32,7 @@ public static class LocalCoopInputRouter
         ClientControllerAssignment assignment,
         Action<string> log)
     {
+        RememberControllerInputStrategy(strategy);
         SteamControllerInputSelection.ApplySelection(
             strategy,
             assignment.ControllerDevice,
@@ -38,9 +42,55 @@ public static class LocalCoopInputRouter
             message => log(FormatRuntimeAssignmentLog(assignment, message)));
     }
 
+    public static void RememberControllerInputStrategy(object strategy)
+    {
+        lock (StrategyLock)
+        {
+            _steamInputStrategy = new WeakReference<object>(strategy);
+        }
+    }
+
+    public static bool TryGetRememberedControllerInputStrategy(out object? strategy)
+    {
+        lock (StrategyLock)
+        {
+            if (_steamInputStrategy is not null && _steamInputStrategy.TryGetTarget(out strategy))
+            {
+                return true;
+            }
+
+            strategy = null;
+            return false;
+        }
+    }
+
+    public static bool TryApplyControllerSelectionToRememberedStrategy(
+        ClientControllerAssignment assignment,
+        Action<string> log)
+    {
+        object? strategy;
+        lock (StrategyLock)
+        {
+            if (_steamInputStrategy is null || !_steamInputStrategy.TryGetTarget(out strategy))
+            {
+                return false;
+            }
+        }
+
+        ApplyControllerSelection(strategy, assignment, log);
+        return true;
+    }
+
     public static bool IsSelectedControllerActive(ClientControllerAssignment assignment)
     {
         return SteamControllerInputSelection.IsSelectedControllerActive(assignment.ControllerDevice);
+    }
+
+    public static BrokerControllerDeviceAssignment ResolveEffectiveControllerDevice(ClientControllerAssignment assignment)
+    {
+        return SteamControllerInputSelection.ResolveEffectiveControllerDevice(
+            assignment.ControllerDevice,
+            assignment.ControllerClientCount);
     }
 
     public static ControllerSourceObservation ObserveSelectedSteamSource(object? inputEvent)
@@ -62,6 +112,20 @@ public static class LocalCoopInputRouter
     {
         SteamControllerInputSelection.RegisterGeneratedOriginalSteamControllerInput(inputEvent);
         SteamControllerInputSelection.RegisterGeneratedNativeAction(inputEvent);
+    }
+
+    public static void ObserveNativeFallbackSource(
+        object? inputEvent,
+        BrokerControllerDeviceAssignment assignment)
+    {
+        SteamControllerInputSelection.RegisterNativeFallbackSourceInput(inputEvent, assignment);
+    }
+
+    public static bool TryConsumeNativeFallbackGeneratedInput(
+        object? inputEvent,
+        BrokerControllerDeviceAssignment assignment)
+    {
+        return SteamControllerInputSelection.TryConsumeNativeFallbackGeneratedInput(inputEvent, assignment);
     }
 
     public static bool TryDeliverCanonicalInputToSink(
@@ -148,16 +212,17 @@ public static class LocalCoopInputRouter
             "controller_d_pad_south" => CanonicalInputAction.Down,
             "controller_d_pad_west" => CanonicalInputAction.Left,
             "controller_d_pad_east" => CanonicalInputAction.Right,
-            "controller_face_button_south" => CanonicalInputAction.Confirm,
+            "controller_face_button_south" => CanonicalInputAction.Select,
             "controller_face_button_east" => CanonicalInputAction.Cancel,
-            "controller_face_button_west" => CanonicalInputAction.Select,
+            "controller_face_button_west" => CanonicalInputAction.TopPanel,
             "controller_left_shoulder" or "controller_left_bumper" => CanonicalInputAction.TabLeft,
             "controller_right_shoulder" or "controller_right_bumper" => CanonicalInputAction.TabRight,
             "controller_left_trigger" => CanonicalInputAction.PileLeft,
             "controller_right_trigger" => CanonicalInputAction.PileRight,
-            "controller_ps4_touchpad" => CanonicalInputAction.Map,
+            "controller_ps4_touchpad" or "controller_select_button" or "ui_controller_touch_pad" => CanonicalInputAction.Map,
             "controller_start" or "controller_start_button" => CanonicalInputAction.Settings,
-            "controller_face_button_north" => CanonicalInputAction.Peek,
+            "controller_face_button_north" => CanonicalInputAction.Confirm,
+            "controller_joystick_press" => CanonicalInputAction.Peek,
             _ => null
         };
     }
@@ -241,6 +306,7 @@ public enum CanonicalInputAction
     Confirm,
     Cancel,
     Select,
+    TopPanel,
     TabLeft,
     TabRight,
     PileLeft,

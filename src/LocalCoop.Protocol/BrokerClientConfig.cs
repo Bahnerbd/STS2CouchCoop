@@ -34,7 +34,7 @@ public sealed record BrokerClientConfig(
             : (int?)null;
         var controllerDevice = inputMode == BrokerClientInputMode.None
             ? BrokerControllerDeviceAssignment.None
-            : BrokerControllerDeviceAssignment.ForDevice(playerSlot);
+            : default;
 
         if (string.IsNullOrWhiteSpace(sessionId))
         {

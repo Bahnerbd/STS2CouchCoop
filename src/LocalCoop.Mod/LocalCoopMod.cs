@@ -25,6 +25,7 @@ public static class LocalCoopMod
         if (!string.IsNullOrWhiteSpace(modDirectory))
         {
             startup = BrokerModStartup.Initialize(modDirectory, _ => TransportSeamProbe.Run());
+            DynamicControllerCoordinator.Initialize(startup.Settings);
             runIdentityDiagnosticsSettings = RunIdentityDiagnosticsSettings.LoadFromDirectory(modDirectory);
             RunIdentityDiagnostics.Configure(startup.Settings, runIdentityDiagnosticsSettings);
         }
