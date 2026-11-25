@@ -6,7 +6,7 @@ It starts multiple local STS2 clients, assigns input slots, runs a loopback brok
 
 ## Status
 
-LocalCoop is an Experimental Alpha tested against Slay the Spire 2 v0.103.3 on Windows x64.
+LocalCoop 0.1.3 is an Experimental Alpha checked against Slay the Spire 2 v0.113.1 on Windows x64. The package includes the native hook results in `COMPATIBILITY.txt`. Full multiplayer runs with physical controllers still need playtesting.
 
 Expect rough edges. This release does not promise polished split-screen presentation, full gameplay stability, compatibility with every future STS2 update, or compatibility with arbitrary mod combinations.
 

@@ -88,7 +88,7 @@ public sealed class BrokerPlayerDisplayNameTests
         var playerId = BrokerPlayerId.ForClientIndex(2);
         var nameplate = new FakeNameplateLabel();
         var node = new FakeRemoteLobbyPlayer(playerId, new Ironclad(), nameplate);
-        var lobbyPlayer = new LobbyPlayer
+        var lobbyPlayer = new StartRunLobbyPlayer
         {
             id = playerId,
             character = new Silent()

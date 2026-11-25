@@ -44,6 +44,8 @@ public sealed class BrokerClientJoinFlowTests
         {
             playersInLobby = [],
             modifiers = [],
+            gameMode = GameMode.Blitz,
+            isCustom = true,
             seed = "HOSTSEED"
         };
 
@@ -76,7 +78,8 @@ public sealed class BrokerClientJoinFlowTests
 
         var result = await joinTask.WaitAsync(TimeSpan.FromSeconds(1));
 
-        Assert.AreEqual(GameMode.Standard, result.gameMode);
+        Assert.AreEqual(GameMode.Blitz, result.gameMode);
+        Assert.IsTrue(result.isCustom);
         Assert.AreEqual(RunSessionState.InLobby, result.sessionState);
         Assert.IsTrue(result.joinResponse.HasValue);
         Assert.AreEqual("HOSTSEED", result.joinResponse.Value.seed);
@@ -94,7 +97,7 @@ public sealed class BrokerClientJoinFlowTests
         var response = new ClientLoadJoinResponseMessage
         {
             serializableRun = MinimalSerializableRun(),
-            playersAlreadyConnected = [BrokerPlayerId.ForClientIndex(0)]
+            playersAlreadyConnected = [new LoadRunLobbyPlayer { id = BrokerPlayerId.ForClientIndex(0) }]
         };
         var initialInfo = ValidInitialGameInfo();
         initialInfo.sessionState = RunSessionState.InLoadedLobby;
@@ -130,7 +133,7 @@ public sealed class BrokerClientJoinFlowTests
         Assert.IsFalse(result.joinResponse.HasValue);
         Assert.IsTrue(result.loadJoinResponse.HasValue);
         Assert.AreEqual(1, result.loadJoinResponse.Value.playersAlreadyConnected.Count);
-        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), result.loadJoinResponse.Value.playersAlreadyConnected.Single());
+        Assert.AreEqual(BrokerPlayerId.ForClientIndex(0), result.loadJoinResponse.Value.playersAlreadyConnected.Single().id);
         Assert.IsTrue(BrokerPendingNetGameServiceRegistry.TryTake(settings.ClientId, out var pending));
         Assert.AreEqual(NetGameType.Client, pending!.Type);
         pending.Dispose();
@@ -146,6 +149,8 @@ public sealed class BrokerClientJoinFlowTests
         {
             playersInLobby = [],
             modifiers = [],
+            gameMode = GameMode.Blitz,
+            isCustom = true,
             seed = "HOSTSEED"
         };
 
@@ -207,9 +212,10 @@ public sealed class BrokerClientJoinFlowTests
     {
         var unlockState = new SerializableUnlockState();
 
-        var request = BrokerClientJoinFlow.CreateJoinRequest(7, unlockState);
+        var request = BrokerClientJoinFlow.CreateJoinRequest(7, unlockState, 3);
 
-        Assert.AreEqual(7, request.maxAscensionUnlocked);
+        Assert.AreEqual(7, request.maxStandardAscension);
+        Assert.AreEqual(3, request.maxBlitzAscension);
         Assert.AreEqual(unlockState, request.unlockState);
     }
 
@@ -281,11 +287,6 @@ public sealed class BrokerClientJoinFlowTests
     {
         return new InitialGameInfoMessage
         {
-            version = "test",
-            idDatabaseHash = 0,
-            gameplayAffectingMods = [],
-            otherMods = [],
-            gameMode = GameMode.Standard,
             sessionState = RunSessionState.InLobby,
             connectionFailureReason = null
         };
@@ -306,7 +307,7 @@ public sealed class BrokerClientJoinFlowTests
             SerializableRng = new SerializableRunRngSet
             {
                 Seed = "TESTSEED",
-                Counters = []
+                Rngs = []
             },
             SerializableSharedRelicGrabBag = new SerializableRelicGrabBag
             {

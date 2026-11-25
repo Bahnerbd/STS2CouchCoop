@@ -1,7 +1,6 @@
 using System.Reflection;
 using HarmonyLib;
 using LocalCoop.Mod.Runtime;
-using MegaCrit.Sts2.Core.Multiplayer.Connection;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 
 namespace LocalCoop.Mod.Patches;
@@ -16,10 +15,10 @@ public static class BrokerClientJoinFlowPatch
         var type = AccessTools.TypeByName("MegaCrit.Sts2.Core.Multiplayer.Game.JoinFlow");
         return type is null
             ? null
-            : AccessTools.Method(type, "Begin", [typeof(IClientConnectionInitializer), AccessTools.TypeByName("Godot.SceneTree")]);
+            : AccessTools.Method(type, "Begin", [AccessTools.TypeByName("Godot.SceneTree")]);
     }
 
-    public static bool Prefix(ref Task<JoinResult> __result)
+    public static bool Prefix(JoinFlow __instance, ref Task<JoinResult> __result)
     {
         var settings = LoadSettings();
         if (!BrokerClientJoinFlow.ShouldUseBrokerJoin(settings))
@@ -32,7 +31,8 @@ public static class BrokerClientJoinFlowPatch
             settings,
             () => CreateTransport(settings),
             log.Write,
-            CancellationToken.None);
+            __instance.CancelToken.Token,
+            localVersion: __instance.NetService.LocalVersion);
         return false;
     }
 

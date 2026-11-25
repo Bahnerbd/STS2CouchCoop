@@ -19,7 +19,6 @@ public sealed class LocalCoopPatchInstallerTests
                 typeof(LocalCoop.Mod.Patches.BrokerHostENetStartupBypassPatch),
                 typeof(LocalCoop.Mod.Patches.BrokerLocalPlayerIdPatch),
                 typeof(LocalCoop.Mod.Patches.BrokerLobbyServiceSubstitutionPatch),
-                typeof(LocalCoop.Mod.Patches.BrokerBeginRunPatch),
                 typeof(LocalCoop.Mod.Patches.BrokerPlayerDisplayNamePlatformPatch),
                 typeof(LocalCoop.Mod.Patches.BrokerPlayerDisplayNameNameplatePatch),
                 typeof(LocalCoop.Mod.Patches.BaseLibHealthBarForecastCompatibilityPatch),

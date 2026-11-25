@@ -11,35 +11,25 @@ public static class BrokerLobbyServiceSubstitutionPatch
 
     public static IEnumerable<MethodBase> TargetMethods()
     {
-        var targets = new[]
-        {
-            (
-                TypeName: "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NCharacterSelectScreen",
-                MethodNames: new[] { "InitializeMultiplayerAsHost", "InitializeMultiplayerAsClient" }
-            ),
-            (
-                TypeName: "MegaCrit.Sts2.Core.Nodes.Screens.CharacterSelect.NMultiplayerLoadGameScreen",
-                MethodNames: new[] { "InitializeAsHost", "InitializeAsClient" }
-            ),
-            (
-                TypeName: "MegaCrit.Sts2.Core.Nodes.Screens.DailyRun.NDailyRunLoadScreen",
-                MethodNames: new[] { "InitializeAsHost", "InitializeAsClient" }
-            ),
-            (
-                TypeName: "MegaCrit.Sts2.Core.Nodes.Screens.CustomRun.NCustomRunLoadScreen",
-                MethodNames: new[] { "InitializeAsHost", "InitializeAsClient" }
-            )
-        };
-
+        string[] newLobbyScreens = [
+            "CharacterSelect.NCharacterSelectScreen", "Blitz.NBlitzScreen", "Dread.NDreadScreen",
+            "CustomRun.NCustomRunScreen", "DailyRun.NDailyRunScreen"
+        ];
+        string[] loadScreens = [
+            "CharacterSelect.NMultiplayerLoadGameScreen", "DailyRun.NDailyRunLoadScreen",
+            "CustomRun.NCustomRunLoadScreen"
+        ];
+        var targets = newLobbyScreens.Select(screen => (screen, host: "InitializeMultiplayerAsHost", client: "InitializeMultiplayerAsClient"))
+            .Concat(loadScreens.Select(screen => (screen, host: "InitializeAsHost", client: "InitializeAsClient")));
         foreach (var target in targets)
         {
-            var type = AccessTools.TypeByName(target.TypeName);
+            var type = AccessTools.TypeByName("MegaCrit.Sts2.Core.Nodes.Screens." + target.screen);
             if (type is null)
             {
                 continue;
             }
 
-            foreach (var methodName in target.MethodNames)
+            foreach (var methodName in new[] { target.host, target.client })
             {
                 foreach (var method in AccessTools.GetDeclaredMethods(type).Where(method => method.Name == methodName))
                 {

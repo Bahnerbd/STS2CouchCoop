@@ -51,18 +51,18 @@ function Set-TestPublicManifest([string]$manifestPath, [string]$author = 'Bahne'
     } | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $manifestPath
 }
 
-function Set-TestPublicReadme([string]$readmePath) {
-    @'
+function Set-TestPublicReadme([string]$readmePath, [string]$sts2Version = 'v0.107.1') {
+    @"
 # LocalCoop for Slay the Spire 2
 
-LocalCoop is an Experimental Alpha tested against Slay the Spire 2 v0.103.3 on Windows x64.
+LocalCoop is an Experimental Alpha checked against Slay the Spire 2 $sts2Version on Windows x64.
 
 Controller/mouse cross-play is not supported in this alpha because STS2 does not split gameplay input between mouse and controller users.
 
 GitHub Issues and Pull Requests are strongly preferred.
 
 LocalCoop does not include or license Slay the Spire 2 assets or binaries.
-'@ | Set-Content -LiteralPath $readmePath
+"@ | Set-Content -LiteralPath $readmePath
 }
 
 $tempRoot = Join-Path ([System.IO.Path]::GetTempPath()) ('localcoop-release-tests-' + [Guid]::NewGuid().ToString('N'))
@@ -80,7 +80,7 @@ try {
     Assert-Equal $manifest.has_dll $true 'Manifest has_dll flag should be preserved.'
 
     $stageRoot = Join-Path $tempRoot 'stage'
-    $packageRoot = Join-Path $stageRoot 'LocalCoop'
+    $packageRoot = Join-Path $stageRoot 'mods\LocalCoop'
     New-Item -ItemType Directory -Path (Join-Path $packageRoot 'broker') -Force | Out-Null
     $packageManifestPath = Join-Path $packageRoot 'LocalCoop.json'
     $packageReadmePath = Join-Path $packageRoot 'README.md'
@@ -98,23 +98,29 @@ try {
 
     Assert-LocalCoopReleaseLayout -StageRoot $stageRoot
     Assert-LocalCoopReleaseFilePolicy -PackageRoot $packageRoot
-    Assert-LocalCoopReleasePublicReadiness -PackageRoot $packageRoot
+    Assert-LocalCoopReleasePublicReadiness -PackageRoot $packageRoot -Sts2Version 'v0.107.1'
+
+    Set-TestPublicReadme -readmePath $packageReadmePath -sts2Version 'v0.103.3'
+    Assert-Throws {
+        Assert-LocalCoopReleasePublicReadiness -PackageRoot $packageRoot -Sts2Version 'v0.107.1'
+    } 'Slay the Spire 2 v0.107.1' 'Public readiness should reject a README for a different game build.'
+    Set-TestPublicReadme -readmePath $packageReadmePath
 
     Set-TestPublicManifest -manifestPath $packageManifestPath -author 'bahne + Codex'
     Assert-Throws {
-        Assert-LocalCoopReleasePublicReadiness -PackageRoot $packageRoot
+        Assert-LocalCoopReleasePublicReadiness -PackageRoot $packageRoot -Sts2Version 'v0.107.1'
     } "Public release manifest author must be 'Bahne'." 'Public readiness should reject non-public manifest author.'
     Set-TestPublicManifest -manifestPath $packageManifestPath
 
     Set-TestPublicManifest -manifestPath $packageManifestPath -description 'Portable test manifest.'
     Assert-Throws {
-        Assert-LocalCoopReleasePublicReadiness -PackageRoot $packageRoot
+        Assert-LocalCoopReleasePublicReadiness -PackageRoot $packageRoot -Sts2Version 'v0.107.1'
     } "Public release manifest description must include 'Experimental alpha'." 'Public readiness should reject non-alpha manifest description.'
     Set-TestPublicManifest -manifestPath $packageManifestPath
 
     Set-Content -LiteralPath $packageReadmePath -Value '# Current Slice'
     Assert-Throws {
-        Assert-LocalCoopReleasePublicReadiness -PackageRoot $packageRoot
+        Assert-LocalCoopReleasePublicReadiness -PackageRoot $packageRoot -Sts2Version 'v0.107.1'
     } 'Public release README must include: Experimental Alpha' 'Public readiness should reject developer README content.'
     Set-TestPublicReadme -readmePath $packageReadmePath
 

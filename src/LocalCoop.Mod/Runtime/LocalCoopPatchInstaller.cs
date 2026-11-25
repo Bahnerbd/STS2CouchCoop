@@ -14,7 +14,6 @@ public static class LocalCoopPatchInstaller
         typeof(BrokerHostENetStartupBypassPatch),
         typeof(BrokerLocalPlayerIdPatch),
         typeof(BrokerLobbyServiceSubstitutionPatch),
-        typeof(BrokerBeginRunPatch),
         typeof(BrokerPlayerDisplayNamePlatformPatch),
         typeof(BrokerPlayerDisplayNameNameplatePatch),
         typeof(BaseLibHealthBarForecastCompatibilityPatch),
@@ -31,7 +30,7 @@ public static class LocalCoopPatchInstaller
     private static readonly Type[] RunIdentityDiagnosticsPatchTypes =
     [
         typeof(RunIdentityLifecycleDiagnosticsPatches),
-        typeof(OneOffSynchronizerDiagnosticsPatches),
+        typeof(MerchantCardRemovalDiagnosticsPatches),
         typeof(OneOffSynchronizerLocalPlayerDiagnosticsPatch),
         typeof(CardSelectCmdDiagnosticsPatches),
         typeof(CardSelectCmdShouldSelectLocalDiagnosticsPatch),

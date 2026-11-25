@@ -3,7 +3,7 @@
   "name": "LocalCoop",
   "author": "Bahne",
   "description": "Experimental alpha same-machine local co-op launcher and transport bridge for Slay the Spire 2.",
-  "version": "0.1.0",
+  "version": "0.1.3",
   "has_pck": false,
   "has_dll": true,
   "dependencies": [],

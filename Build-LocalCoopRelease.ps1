@@ -1,6 +1,6 @@
 param(
     [string]$GameRoot = (Join-Path $PSScriptRoot '..'),
-    [string]$Version = '0.1.0',
+    [string]$Version = '0.1.3',
     [string]$OutputRoot = (Join-Path $PSScriptRoot 'artifacts\release'),
     [switch]$IncludeSymbols,
     [switch]$SkipRestore
@@ -90,9 +90,9 @@ function Assert-LocalCoopReleaseLayout {
         [string]$StageRoot
     )
 
-    $packageRoot = Join-Path $StageRoot 'LocalCoop'
+    $packageRoot = Join-Path $StageRoot 'mods\LocalCoop'
     if (-not (Test-Path -LiteralPath $packageRoot -PathType Container)) {
-        throw "Release stage must contain a LocalCoop directory: $packageRoot"
+        throw "Release stage must contain a mods\LocalCoop directory: $packageRoot"
     }
 
     $requiredFiles = @(
@@ -197,7 +197,10 @@ function Assert-LocalCoopReleasePublicReadiness {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory = $true)]
-        [string]$PackageRoot
+        [string]$PackageRoot,
+        [Parameter(Mandatory = $true)]
+        [ValidateNotNullOrEmpty()]
+        [string]$Sts2Version
     )
 
     $manifestPath = Join-Path $PackageRoot 'LocalCoop.json'
@@ -224,7 +227,7 @@ function Assert-LocalCoopReleasePublicReadiness {
     $readme = Get-Content -Raw -LiteralPath $readmePath
     $requiredReadmeText = @(
         'Experimental Alpha',
-        'Slay the Spire 2 v0.103.3',
+        "Slay the Spire 2 $Sts2Version",
         'Controller/mouse cross-play is not supported in this alpha because STS2 does not split gameplay input between mouse and controller users',
         'GitHub Issues and Pull Requests are strongly preferred',
         'LocalCoop does not include or license Slay the Spire 2 assets or binaries'
@@ -278,7 +281,7 @@ function Invoke-LocalCoopReleaseBuild {
 
     $resolvedOutputRoot = [System.IO.Path]::GetFullPath($OutputRoot)
     $stageRoot = Join-Path $resolvedOutputRoot 'stage'
-    $packageRoot = Join-Path $stageRoot 'LocalCoop'
+    $packageRoot = Join-Path $stageRoot 'mods\LocalCoop'
     $brokerRoot = Join-Path $packageRoot 'broker'
     $zipName = 'LocalCoop-v{0}-sts2-{1}-win-x64.zip' -f `
         (ConvertTo-LocalCoopReleaseFileToken -Value $Version), `
@@ -297,6 +300,7 @@ function Invoke-LocalCoopReleaseBuild {
         $restorePlans = @(
             @('src\LocalCoop.Mod\LocalCoop.Mod.csproj'),
             @('src\LocalCoop.Protocol\LocalCoop.Protocol.csproj'),
+            @('tools\LocalCoop.CompatibilityCheck\LocalCoop.CompatibilityCheck.csproj'),
             @('src\LocalCoop.Broker.Cli\LocalCoop.Broker.Cli.csproj', '-r', 'win-x64')
         )
         foreach ($restorePlan in $restorePlans) {
@@ -376,13 +380,23 @@ function Invoke-LocalCoopReleaseBuild {
 
     Assert-LocalCoopReleaseLayout -StageRoot $stageRoot
     Assert-LocalCoopReleaseFilePolicy -PackageRoot $packageRoot -IncludeSymbols:$IncludeSymbols
-    Assert-LocalCoopReleasePublicReadiness -PackageRoot $packageRoot
+    Assert-LocalCoopReleasePublicReadiness -PackageRoot $packageRoot -Sts2Version $sts2Version
+
+    Invoke-LocalCoopDotNet `
+        -WorkingDirectory $repoRoot `
+        -FailureMessage 'LocalCoop native game compatibility check failed.' `
+        -Arguments @(
+            'run', '--project', 'tools\LocalCoop.CompatibilityCheck',
+            '-c', 'Release', '--no-restore', '--',
+            $resolvedGameRoot, (Join-Path $packageRoot 'LocalCoop.dll'),
+            (Join-Path $packageRoot 'COMPATIBILITY.txt')
+        )
 
     if (Test-Path -LiteralPath $zipPath) {
         Remove-Item -LiteralPath $zipPath -Force
     }
 
-    Compress-Archive -LiteralPath $packageRoot -DestinationPath $zipPath -Force
+    Compress-Archive -LiteralPath (Join-Path $stageRoot 'mods') -DestinationPath $zipPath -Force
 
     [pscustomobject]@{
         StageRoot = $stageRoot

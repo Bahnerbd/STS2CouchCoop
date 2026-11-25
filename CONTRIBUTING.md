@@ -11,6 +11,6 @@ Avoid synthetic lobby truth, manual state replay, UI reconstruction, timing heur
 ## Before Opening A Pull Request
 
 - Run `dotnet test LocalCoopTransport.sln --no-restore -p:OutputPath=bin\Debug\net9.0-test\` when dependencies are already restored.
-- Run `.\Build-LocalCoopRelease.ps1 -GameRoot '..' -Version 0.1.0 -OutputRoot artifacts\release` when changing packaging or public docs.
+- Run `.\Build-LocalCoopRelease.ps1 -GameRoot '..' -OutputRoot artifacts\release` when changing packaging or public docs.
 - Do not include Slay the Spire 2 binaries, PCK files, logs, generated client folders, local config toggles, or generated release zips.
 - Include focused tests for protocol, broker, launcher, release-script, and packaging changes when practical.

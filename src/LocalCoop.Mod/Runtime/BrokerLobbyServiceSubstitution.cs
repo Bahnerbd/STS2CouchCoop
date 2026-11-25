@@ -31,7 +31,8 @@ public static class BrokerLobbyServiceSubstitution
             return false;
         }
 
-        args[0] = new BrokerNetGameService(brokerService, ToNetGameType(effectiveRole));
+        var localVersion = (args[0] as INetGameService)?.LocalVersion ?? default;
+        args[0] = new BrokerNetGameService(brokerService, ToNetGameType(effectiveRole), localVersion);
         log($"Broker lobby service substituted: clientId={settings.ClientId} effectiveRole={effectiveRole} netId={brokerService.NetId}.");
         return true;
     }

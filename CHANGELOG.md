@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3 - STS2 v0.113.1
+
+- Update the broker join flow for the native lobby responses and separate Standard and Blitz ascension limits.
+- Bridge the new Blitz and Dread lobbies and the Daily and Custom character-selection screens. Use the game's native run-start path.
+- Check Harmony targets against the installed game during packaging. The ZIP includes the compatibility report.
+
 ## 0.1.0 - Experimental Alpha
 
 Initial Nexus-ready alpha release for Slay the Spire 2 v0.103.3 on Windows x64.

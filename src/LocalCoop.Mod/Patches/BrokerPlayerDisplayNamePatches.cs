@@ -94,12 +94,12 @@ public static class BrokerPlayerDisplayNameNameplatePatch
 
     private static ulong? TryGetLobbyPlayerId(object? candidate)
     {
-        return candidate is LobbyPlayer lobbyPlayer ? lobbyPlayer.id : null;
+        return candidate is StartRunLobbyPlayer lobbyPlayer ? lobbyPlayer.id : null;
     }
 
     private static CharacterModel? TryGetLobbyPlayerCharacter(object? candidate)
     {
-        return candidate is LobbyPlayer lobbyPlayer ? lobbyPlayer.character : null;
+        return candidate is StartRunLobbyPlayer lobbyPlayer ? lobbyPlayer.character : null;
     }
 
     private static object? TryGetMember(object source, string name)

@@ -4,7 +4,7 @@ using MegaCrit.Sts2.Core.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Connection;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Messages.Lobby;
-using MegaCrit.Sts2.Core.Runs;
+using MegaCrit.Sts2.Core.Platform;
 using MegaCrit.Sts2.Core.Unlocks;
 
 namespace LocalCoop.Mod.Runtime;
@@ -19,11 +19,13 @@ public static class BrokerClientJoinFlow
 
     public static ClientLobbyJoinRequestMessage CreateJoinRequest(
         int maxAscensionUnlocked,
-        SerializableUnlockState unlockState)
+        SerializableUnlockState unlockState,
+        int maxBlitzAscension = 0)
     {
         return new ClientLobbyJoinRequestMessage
         {
-            maxAscensionUnlocked = maxAscensionUnlocked,
+            maxStandardAscension = maxAscensionUnlocked,
+            maxBlitzAscension = maxBlitzAscension,
             unlockState = unlockState
         };
     }
@@ -31,6 +33,7 @@ public static class BrokerClientJoinFlow
     public static ClientLobbyJoinRequestMessage CreateJoinRequestFromCurrentSave(Action<string>? log)
     {
         var maxAscensionUnlocked = 0;
+        var maxBlitzAscension = 0;
         var unlockState = new SerializableUnlockState();
 
         try
@@ -40,10 +43,11 @@ public static class BrokerClientJoinFlow
             if (saveManager is null)
             {
                 log?.Invoke("Broker client lobby handshake: SaveManager unavailable; using default join request progress.");
-                return CreateJoinRequest(maxAscensionUnlocked, unlockState);
+                return CreateJoinRequest(maxAscensionUnlocked, unlockState, maxBlitzAscension);
             }
 
             var progress = saveManager.GetType().GetProperty("Progress", BindingFlags.Public | BindingFlags.Instance)?.GetValue(saveManager);
+            maxBlitzAscension = progress?.GetType().GetProperty("MaxBlitzAscension")?.GetValue(progress) as int? ?? 0;
             var maxAscension = progress?.GetType().GetProperty("MaxMultiplayerAscension", BindingFlags.Public | BindingFlags.Instance)?.GetValue(progress);
             if (maxAscension is int parsedMaxAscension)
             {
@@ -66,7 +70,7 @@ public static class BrokerClientJoinFlow
             log?.Invoke($"Broker client lobby handshake: failed to read save progress; using default join request progress: {exception.GetType().Name}: {exception.Message}");
         }
 
-        return CreateJoinRequest(maxAscensionUnlocked, unlockState);
+        return CreateJoinRequest(maxAscensionUnlocked, unlockState, maxBlitzAscension);
     }
 
     public static async Task<JoinResult> BeginStandardBrokerJoinAsync(
@@ -74,7 +78,8 @@ public static class BrokerClientJoinFlow
         Func<IBrokerEnvelopeTransport> createTransport,
         Action<string>? log,
         CancellationToken cancellationToken,
-        Func<ClientLobbyJoinRequestMessage>? createJoinRequest = null)
+        Func<ClientLobbyJoinRequestMessage>? createJoinRequest = null,
+        PeerVersionInfo localVersion = default)
     {
         if (!ShouldUseBrokerJoin(settings))
         {
@@ -86,7 +91,7 @@ public static class BrokerClientJoinFlow
             createTransport(),
             log,
             BrokerClientRole.Client) ?? throw new InvalidOperationException("Broker client service could not be created.");
-        var service = new BrokerNetGameService(inner, NetGameType.Client);
+        var service = new BrokerNetGameService(inner, NetGameType.Client, localVersion);
         var initialInfoSource = new TaskCompletionSource<InitialGameInfoMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         var lobbyResponseSource = new TaskCompletionSource<ClientLobbyJoinResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
         var loadResponseSource = new TaskCompletionSource<ClientLoadJoinResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -110,7 +115,7 @@ public static class BrokerClientJoinFlow
         try
         {
             log?.Invoke($"Broker client join flow: waiting for host initial game info clientId={settings.ClientId}.");
-            var initialInfo = await WaitForMessageAsync(service, initialInfoSource.Task, cancellationToken).ConfigureAwait(false);
+            var initialInfo = await WaitForMessageAsync(service, initialInfoSource.Task, cancellationToken);
             ThrowIfInitialGameInfoRejected(initialInfo);
 
             switch (initialInfo.sessionState)
@@ -119,13 +124,14 @@ public static class BrokerClientJoinFlow
                 {
                     log?.Invoke($"Broker client join flow: sending real lobby join request clientId={settings.ClientId}.");
                     service.SendMessage(createJoinRequest?.Invoke() ?? CreateJoinRequestFromCurrentSave(log));
-                    var response = await WaitForMessageAsync(service, lobbyResponseSource.Task, cancellationToken).ConfigureAwait(false);
+                    var response = await WaitForMessageAsync(service, lobbyResponseSource.Task, cancellationToken);
                     service.Update();
                     BrokerPendingNetGameServiceRegistry.Store(settings.ClientId, service);
                     log?.Invoke($"Broker client join flow: received host join response clientId={settings.ClientId}.");
                     return new JoinResult
                     {
-                        gameMode = initialInfo.gameMode,
+                        gameMode = response.gameMode,
+                        isCustom = response.isCustom,
                         sessionState = initialInfo.sessionState,
                         joinResponse = response
                     };
@@ -134,13 +140,14 @@ public static class BrokerClientJoinFlow
                 {
                     log?.Invoke($"Broker client join flow: sending loaded-run join request clientId={settings.ClientId}.");
                     service.SendMessage(new ClientLoadJoinRequestMessage());
-                    var response = await WaitForMessageAsync(service, loadResponseSource.Task, cancellationToken).ConfigureAwait(false);
+                    var response = await WaitForMessageAsync(service, loadResponseSource.Task, cancellationToken);
                     service.Update();
                     BrokerPendingNetGameServiceRegistry.Store(settings.ClientId, service);
                     log?.Invoke($"Broker client join flow: received host loaded-run join response clientId={settings.ClientId}.");
                     return new JoinResult
                     {
-                        gameMode = initialInfo.gameMode,
+                        gameMode = response.serializableRun.GameMode,
+                        isCustom = response.serializableRun.IsCustomGame,
                         sessionState = initialInfo.sessionState,
                         loadJoinResponse = response
                     };
@@ -149,13 +156,14 @@ public static class BrokerClientJoinFlow
                 {
                     log?.Invoke($"Broker client join flow: sending running-run rejoin request clientId={settings.ClientId}.");
                     service.SendMessage(new ClientRejoinRequestMessage());
-                    var response = await WaitForMessageAsync(service, rejoinResponseSource.Task, cancellationToken).ConfigureAwait(false);
+                    var response = await WaitForMessageAsync(service, rejoinResponseSource.Task, cancellationToken);
                     service.Update();
                     BrokerPendingNetGameServiceRegistry.Store(settings.ClientId, service);
                     log?.Invoke($"Broker client join flow: received host rejoin response clientId={settings.ClientId}.");
                     return new JoinResult
                     {
-                        gameMode = initialInfo.gameMode,
+                        gameMode = response.serializableRun.GameMode,
+                        isCustom = response.serializableRun.IsCustomGame,
                         sessionState = initialInfo.sessionState,
                         rejoinResponse = response
                     };
@@ -186,10 +194,10 @@ public static class BrokerClientJoinFlow
         while (!messageTask.IsCompleted)
         {
             service.Update();
-            await Task.Delay(16, cancellationToken).ConfigureAwait(false);
+            await Task.Delay(16, cancellationToken);
         }
 
-        return await messageTask.ConfigureAwait(false);
+        return await messageTask;
     }
 
     private static void ThrowIfInitialGameInfoRejected(InitialGameInfoMessage initialInfo)
@@ -304,7 +312,11 @@ public static class BrokerClientJoinFlow
 
     public sealed class PlaceholderClientConnectionInitializer : IClientConnectionInitializer
     {
-        public Task<NetErrorInfo?> Connect(NetClientGameService service, CancellationToken cancelToken)
+        public PlatformType Platform => PlatformType.None;
+
+        public ulong? GetHostId() => null;
+
+        public Task<NetErrorInfo?> Connect(INetClientGameService service, CancellationToken cancelToken)
         {
             return Task.FromResult<NetErrorInfo?>(null);
         }

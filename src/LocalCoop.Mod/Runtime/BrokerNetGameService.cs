@@ -1,4 +1,5 @@
 using MegaCrit.Sts2.Core.Context;
+using MegaCrit.Sts2.Core.Multiplayer;
 using MegaCrit.Sts2.Core.Multiplayer.Game;
 using MegaCrit.Sts2.Core.Multiplayer.Quality;
 using MegaCrit.Sts2.Core.Multiplayer.Serialization;
@@ -23,10 +24,11 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
     private HashSet<ulong> _lastConnectedPeerIds;
     private int _disposed;
 
-    public BrokerNetGameService(BrokerBackedNetService inner, NetGameType type)
+    public BrokerNetGameService(BrokerBackedNetService inner, NetGameType type, PeerVersionInfo localVersion = default)
     {
         _inner = inner;
         _type = type;
+        LocalVersion = localVersion;
         _lastConnectedPeerIds = [];
         _inner.PeerTracked += HandlePeerTracked;
         _receiveLoop = _inner.RunReceiveLoopAsync(_receiveLoopCancellation.Token);
@@ -35,6 +37,12 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
     public ulong NetId => _inner.NetId;
 
     public bool IsConnected => _inner.IsConnected;
+
+    public PeerVersionInfo LocalVersion { get; }
+
+    // Local clients share the staged game and mod installation.
+    public PeerVersionInfo? GetVersionInfoForPeer(ulong peerId) =>
+        _inner.ConnectedPeerIds.Contains(peerId) ? LocalVersion : null;
 
     public bool IsGameLoading => _inner.IsGameLoading;
 
@@ -51,6 +59,7 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
             .Select(peer => new NetClientData
             {
                 peerId = peer.PeerId,
+                versionInfo = LocalVersion,
                 readyForBroadcasting = peer.ReadyForBroadcasting
             })
             .ToArray();
@@ -68,6 +77,9 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
         add => _clientConnected += value;
         remove => _clientConnected -= value;
     }
+
+    // Registration failures occur before the broker exposes a peer to the game.
+    public event Action<ulong, NetErrorInfo>? ClientConnectionFailed { add { } remove { } }
 
     public event Action<ulong, NetErrorInfo>? ClientDisconnected
     {
@@ -131,7 +143,7 @@ public sealed class BrokerNetGameService : INetHostGameService, IDisposable
         Dispose();
     }
 
-    public void DisconnectClient(ulong peerId, NetError reason, bool now)
+    public void DisconnectClient(ulong peerId, NetError reason, bool now, string? debugReason = null)
     {
     }
 

@@ -23,7 +23,7 @@ MouseMux or similar tools may work in theory for multiple mice, but they are unt
 
 ## Future STS2 Updates May Break LocalCoop
 
-LocalCoop is tested against Slay the Spire 2 v0.103.3 on Windows x64. STS2 is still changing, and future game updates may break LocalCoop's hooks, launcher assumptions, broker integration, or input behavior.
+LocalCoop is checked against Slay the Spire 2 v0.113.1 on Windows x64. STS2 is still changing, and future game updates may break LocalCoop's hooks, launcher assumptions, broker integration, or input behavior.
 
 Compatibility fixes are best effort while the maintainer is still actively playing Slay the Spire 2.
 

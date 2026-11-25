@@ -85,44 +85,15 @@ public static class RunIdentityLifecycleDiagnosticsPatches
 }
 
 [HarmonyPatch]
-public static class OneOffSynchronizerDiagnosticsPatches
+public static class MerchantCardRemovalDiagnosticsPatches
 {
-    private static readonly HashSet<string> MethodNames = new(StringComparer.Ordinal)
-    {
-        "DoLocalMerchantCardRemoval",
-        "HandleMerchantCardRemoval",
-        "DoMerchantCardRemoval"
-    };
+    public static MethodBase? TargetMethod() =>
+        AccessTools.Method("MegaCrit.Sts2.Core.Entities.Merchant.MerchantCardRemovalEntry:DoCardRemoval");
 
-    public static IEnumerable<MethodBase> TargetMethods()
+    public static void Prefix(MethodBase __originalMethod, object?[] __args)
     {
-        return RunIdentityDiagnosticsPatchTarget.FindMethods(
-            "MegaCrit.Sts2.Core.Multiplayer.Game.OneOffSynchronizer",
-            "OneOffSynchronizer",
-            MethodNames);
-    }
-
-    public static void Prefix(MethodBase __originalMethod, object? __instance, object?[] __args)
-    {
-        if (string.Equals(__originalMethod.Name, "DoLocalMerchantCardRemoval", StringComparison.Ordinal))
-        {
-            RunIdentityDiagnostics.StartCorrelation("shop-remove-local");
-        }
-        else if (string.Equals(__originalMethod.Name, "HandleMerchantCardRemoval", StringComparison.Ordinal))
-        {
-            RunIdentityDiagnostics.StartCorrelation("shop-remove-remote");
-        }
-        else
-        {
-            RunIdentityDiagnostics.EnsureCorrelation("shop-remove-native");
-        }
-
-        RunIdentityDiagnostics.LogBoundary("one-off-enter", __originalMethod, __instance, __args);
-    }
-
-    public static void Postfix(MethodBase __originalMethod, object? __instance, object?[] __args)
-    {
-        RunIdentityDiagnostics.LogBoundary("one-off-exit", __originalMethod, __instance, __args);
+        RunIdentityDiagnostics.StartCorrelation("shop-remove-native");
+        RunIdentityDiagnostics.LogBoundary("shop-remove-enter", __originalMethod, null, __args);
     }
 }
 

@@ -8,7 +8,7 @@ Experimental same-machine local co-op launcher and transport bridge for Slay the
 
 LocalCoop starts multiple local Slay the Spire 2 clients, assigns input slots, runs a loopback broker, and bridges the game's native multiplayer traffic between those clients.
 
-This is an Experimental Alpha tested against Slay the Spire 2 v0.103.3 on Windows x64. Expect rough edges. This release does not promise polished split-screen presentation, full gameplay stability, compatibility with every future STS2 update, or compatibility with arbitrary mod combinations.
+This is an Experimental Alpha checked against Slay the Spire 2 v0.113.1 on Windows x64. Expect rough edges. This release does not promise polished split-screen presentation, full gameplay stability, compatibility with every future STS2 update, or compatibility with arbitrary mod combinations.
 
 ## Requirements
 
@@ -88,4 +88,4 @@ LocalCoop source code is MIT licensed. LocalCoop does not include or license Sla
 
 ## Changelog
 
-Initial Nexus-ready alpha release for Slay the Spire 2 v0.103.3 on Windows x64.
+Version 0.1.3 updates the multiplayer bridge for STS2 v0.113.1. The ZIP includes the native hook verification report.
